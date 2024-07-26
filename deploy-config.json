@@ -1,0 +1,112 @@
+{
+	"tokens": {
+		"testnet": [
+			{
+				"name": "WBitcoin",
+				"rawName": "WBTC",
+				"symbol": "0xBTC",
+				"decimals": 8
+			},
+			{
+				"name": "Maker",
+				"rawName": "MKR",
+				"symbol": "MKR",
+				"decimals": 18
+			},
+			{
+				"name": "USDC",
+				"rawName": "USDC",
+				"symbol": "USDC",
+				"decimals": 6
+			},
+			{
+				"name": "DAI",
+				"rawName": "DAI",
+				"symbol": "DAI",
+				"decimals": 18
+			},
+			{
+				"name": "Tether USD",
+				"rawName": "USDT",
+				"symbol": "USDT",
+				"decimals": 6
+			},
+			{
+				"name": "Wrapped Ether",
+				"rawName": "WETH",
+				"symbol": "WETH",
+				"decimals": 18
+			},
+			{
+				"name": "Liquid staked Ether",
+				"rawName": "STETH",
+				"symbol": "stETH",
+				"decimals": 18
+			},
+			{
+				"name": "Wrapped Liquid staked Ether",
+				"rawName": "WSTETH",
+				"symbol": "WstETH",
+				"decimals": 18
+			}
+		]
+	},
+	"initialRates": [
+		{
+			"rawName1": "DAI",
+			"rawName0": "USDT",
+			"amount1": "100000000000000000000000000",
+			"amount0": "100000000000000"
+		},
+		{
+			"rawName1": "DAI",
+			"rawName0": "USDC",
+			"amount1": "100000000000000000000000000",
+			"amount0": "100000000000000"
+		},
+		{
+			"rawName1": "USDC",
+			"rawName0": "USDT",
+			"amount1": "100000000000000",
+			"amount0": "100000000000000"
+		},
+		{
+			
+			"rawName1": "WBTC",
+			"rawName0": "USDT",
+			"amount1": "100000000000",
+			"amount0": "40000000000000"
+		},
+		{
+			"rawName1": "WETH",
+			"rawName0": "USDT",
+			"amount1": "1000000000000000000000",
+			"amount0": "1800000000000"
+		},
+		{
+			"rawName1": "WETH",
+			"rawName0": "DAI",
+			"amount1": "1000000000000000000000",
+			"amount0": "1800000000000000000000000"
+		},
+
+		{
+			"rawName1": "STETH",
+			"rawName0": "USDT",
+			"amount1": "1000000000000000000000",
+			"amount0": "1800000000000"
+		},
+		{
+			"rawName1": "WSTETH",
+			"rawName0": "USDT",
+			"amount1": "1000000000000000000000",
+			"amount0": "1800000000000"
+		},
+		{
+			"rawName1": "MKR",
+			"rawName0": "USDT",
+			"amount1": "1000000000000000000000000",
+			"amount0": "4000000000000000"
+		}
+	]
+}

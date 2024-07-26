@@ -1,0 +1,7 @@
+.git
+.env
+npm-debug.log
+node_modules
+artifacts
+deployments
+docker-compose*

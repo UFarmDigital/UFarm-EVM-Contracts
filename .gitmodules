@@ -1,0 +1,15 @@
+[submodule "contracts/test/Uniswap"]
+	path = contracts/test/Uniswap
+	url = git@gitlab.com:ufarm-digital/uniswap-fork.git
+[submodule "contracts/test/OneInch"]
+	path = contracts/test/OneInch
+	url = git@gitlab.com:ufarm-digital/1inch-fork.git
+[submodule "contracts/test/UniswapV3"]
+	path = contracts/test/UniswapV3
+	url = git@gitlab.com:ufarm-digital/uniswap-v3-fork.git
+[submodule "ufarm-evm-typings"]
+	path = ufarm-evm-typings
+	url = git@gitlab.com:ufarm-digital/ufarm-evm-typings.git
+[submodule "contracts/test/lido"]
+	path = contracts/test/lido
+	url = git@gitlab.com:ufarm-digital/lido-fork.git

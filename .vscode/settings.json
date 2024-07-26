@@ -1,0 +1,23 @@
+{
+    "prettier.prettierPath": "./node_modules/prettier",
+    "cSpell.words": [
+        "Aggr",
+        "Comission",
+        "IERC",
+        "Liqudity",
+        "mintable",
+        "nomicfoundation",
+        "nomiclabs",
+        "Numberish",
+        "NUMENATOR",
+        "oneinch",
+        "prtocols",
+        "Prty",
+        "routerv",
+        "Topup",
+        "typechain",
+        "UFARM",
+        "USDTWETH",
+        "Usefull"
+    ]
+}

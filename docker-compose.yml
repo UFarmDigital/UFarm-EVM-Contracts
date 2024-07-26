@@ -1,0 +1,67 @@
+version: "3.4"
+
+services:
+  rpc-node:
+    image: registry.gitlab.com/ufarm-digital/dev-chain-node:latest
+    ports:
+      - "${PORT_RPC:-8545}:8545"
+      - "${PORT_ENODE_RPC:-30304}:30303"
+    volumes:
+      - data_rpc:/root/.ethereum
+    healthcheck:
+      test: "wget --post-data '{\"jsonrpc\": \"2.0\",\"method\": \"web3_clientVersion\",\"params\": [],\"id\": 1}' --header 'Content-Type: application/json' --spider -q 127.0.0.1:8545"
+      start_period: 30s
+    command:
+      - "--http"
+      - "--http.addr"
+      - "0.0.0.0"
+      - "--http.api"
+      - "eth,net,web3"
+      - "--vmodule"
+      - "rpc=5,eth=5"
+      - "--http.vhosts=*"
+      - "--allow-insecure-unlock"
+      - "--keystore"
+      - "/keystore"
+      - "--password"
+      - "/config/password"
+      - "--unlock"
+      - "0x6500d20261374113ce2f6484d6b565386fee8f4c"
+      - "--mine"
+      - "--miner.etherbase"
+      - "0x6500d20261374113ce2f6484d6b565386fee8f4c"
+    networks:
+      - default
+    restart: always
+
+  deploy-node:
+    build:
+      context: .
+      dockerfile: ./.docker/Dockerfile
+    depends_on:
+      rpc-node:
+        condition: "service_healthy"
+    networks:
+      - default
+
+  swap-node:
+    build:
+      context: .
+      dockerfile: ./.docker/Dockerfile
+    command:
+      - "run-swaps"
+      - "--"
+      - "--network"
+      - "ufarmDocker"
+    depends_on:
+      deploy-node:
+        condition: "service_completed_successfully"
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  data_rpc: { }
