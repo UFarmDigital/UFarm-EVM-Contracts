@@ -26,6 +26,7 @@ import {
 	prepareWithdrawRequest,
 } from '../test/_helpers'
 import {
+	QuexCore,
 	StableCoin,
 	UFarmCore,
 	UnoswapV2Controller,
@@ -54,6 +55,10 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 		usdt_deployment,
 		deployerSigner,
 	)
+
+	const quexCore_instance = (
+		getInstanceFromDeployment<QuexCore>(hre, await hre.deployments.get('QuexCore'))
+	).connect(deployerSigner)
 
 	const namedSigners = await hre.getNamedAccounts()
 
@@ -142,6 +147,7 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 		)
 		// Deposit to the pool
 		await mintAndDeposit(pool_instance_1.pool, usdt_instance, deployerSigner, sharesToMint)
+		await quexCore_instance.sendResponse(pool_instance_1.pool.address, 0)
 	}
 
 	{
@@ -284,6 +290,7 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 
 	await activatePool(poolTest3_instance, usdt_instance, deployerSigner, hre)
 
+	let totalCost = BigNumber.from(0)
 	{
 		// mint random USDT amount to every named signer
 		const first8signers = Object.entries(namedSigners).slice(0, 8)
@@ -303,6 +310,8 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 				await (
 					await mintAndDeposit(poolTest3_instance.pool, usdt_instance, signer, usdToDeposit)
 				).wait()
+				await quexCore_instance.sendResponse(poolTest3_instance.pool.address, totalCost)
+				totalCost = totalCost.add(usdToDeposit)
 
 				console.log(
 					`Minted:${ethers.utils.formatUnits(
@@ -329,10 +338,12 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 				// await (await poolTest3_instance.pool.connect(signer).withdraw(withdrawalRequest)).wait()
 				await hre.deployments.execute(
 					'TestPool3',
-					{ from: signer.address, estimateGasExtra: 1000000 },
+					{ from: signer.address, estimateGasExtra: 1000000, gasLimit: 1000000 },
 					'withdraw',
 					withdrawalRequest,
 				)
+				await quexCore_instance.sendResponse(poolTest3_instance.pool.address, totalCost)
+				totalCost = totalCost.sub(withdrawAmount)
 
 				console.log(
 					`Withdrew ${ethers.utils.formatUnits(withdrawAmount, 6)} from pool 3 to ${name}`,

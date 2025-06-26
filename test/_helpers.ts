@@ -1122,7 +1122,9 @@ export async function deployPool(
 		const receipt = await createPoolTx.wait()
 		// parse pool address from event
 		const signer = fundWithManager.signer
+		
 		const poolAddress = receipt.events?.find((x) => x.event === 'PoolCreated')?.args?.pool as string
+
 		const poolAdminAddr = receipt.events?.find((x) => x.event === 'PoolCreated')?.args
 			?.poolAdmin as string
 		return {
@@ -1141,6 +1143,15 @@ export async function deployPool(
 		}
 	}
 }
+
+export const nullClientVerification = () => {
+	return {
+		signature: "0x",
+		validTill: 0,
+		tier: 0
+	}
+}
+
 /**
  * @dev Mints and deposits tokens to pool
  * @dev for testing purposes only
@@ -1159,7 +1170,7 @@ export async function mintAndDeposit(
 	// ;(await mintableToken.connect(signer).mint(signer.address, amount)).wait()
 	await mintTokens(mintableToken, amount, signer)
 	await safeApprove(mintableToken, pool.address, amount, signer)
-	return await pool.connect(signer).deposit(amount)
+	return await pool.connect(signer).deposit(amount, nullClientVerification())
 }
 
 function encodeSwapData(
@@ -1533,6 +1544,7 @@ export function encodeCollectFeesUniV3(
 
 export type WithdrawRequestStruct = {
 	sharesToBurn: BigNumberish
+	minOutputAmount: BigNumberish
 	salt: string
 	poolAddr: string
 }
@@ -1550,6 +1562,7 @@ export async function prepareWithdrawRequest(
 	// Sign the withdraw request
 	const signedWithdrawalRequest = await _signWithdrawRequest(pool, user, {
 		sharesToBurn: sharesToBurn,
+		minOutputAmount: 0,
 		salt: ethers.utils.solidityKeccak256(['string'], [Date.now().toString()]),
 		poolAddr: pool.address,
 	} as WithdrawRequestStruct)
@@ -1611,23 +1624,25 @@ export async function _signWithdrawRequest(
 			{ name: 'sharesToBurn', type: 'uint256' },
 			{ name: 'salt', type: 'bytes32' },
 			{ name: 'poolAddr', type: 'address' },
+			{ name: 'minOutputAmount', type: 'uint256' },
 		],
 	}
 
 	const withdrawRequest_string =
-		'WithdrawRequest(uint256 sharesToBurn,bytes32 salt,address poolAddr)'
+		'WithdrawRequest(uint256 sharesToBurn,bytes32 salt,address poolAddr,uint256 minOutputAmount)'
 
 	const withdrawRequest_hash = ethers.utils.solidityKeccak256(
 		['bytes'],
 		[
 			ethers.utils.arrayify(
 				ethers.utils.defaultAbiCoder.encode(
-					['bytes32', 'uint256', 'bytes32', 'address'],
+					['bytes32', 'uint256', 'bytes32', 'address', 'uint256'],
 					[
 						_hashStr(withdrawRequest_string),
 						withdrawRequest_msg.sharesToBurn,
 						withdrawRequest_msg.salt,
 						withdrawRequest_msg.poolAddr,
+						withdrawRequest_msg.minOutputAmount,
 					],
 				),
 			),
@@ -1648,9 +1663,11 @@ export async function _signWithdrawRequest(
 }
 export type DepositRequestStruct = {
 	amountToInvest: BigNumberish
+	minOutputAmount: BigNumberish
 	salt: string
 	poolAddr: string
 	deadline: BigNumberish
+	bearerToken: string
 }
 
 export type SignedDepositRequestStruct = {
@@ -1696,24 +1713,28 @@ export async function _signDepositRequest(
 			{ name: 'salt', type: 'bytes32' },
 			{ name: 'poolAddr', type: 'address' },
 			{ name: 'deadline', type: 'uint96' },
+			{ name: 'bearerToken', type: 'address' },
+			{ name: 'minOutputAmount', type: 'uint256' },
 		],
 	}
 
 	const depositRequest_string =
-		'DepositRequest(uint256 amountToInvest,bytes32 salt,address poolAddr,uint96 deadline)'
+		'DepositRequest(uint256 amountToInvest,bytes32 salt,address poolAddr,uint96 deadline,address bearerToken,uint256 minOutputAmount)'
 
 	const depositRequest_hash = ethers.utils.solidityKeccak256(
 		['bytes'],
 		[
 			ethers.utils.arrayify(
 				ethers.utils.defaultAbiCoder.encode(
-					['bytes32', 'uint256', 'bytes32', 'address', 'uint96'],
+					['bytes32', 'uint256', 'bytes32', 'address', 'uint96', 'address', 'uint256'],
 					[
 						_hashStr(depositRequest_string),
 						depositRequest_msg.amountToInvest,
 						depositRequest_msg.salt,
 						depositRequest_msg.poolAddr,
 						depositRequest_msg.deadline,
+						depositRequest_msg.bearerToken,
+						depositRequest_msg.minOutputAmount,
 					],
 				),
 			),

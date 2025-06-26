@@ -1,7 +1,7 @@
 {
 	"name": "ufarm-evm-contracts",
 	"description": "UFarm EVM Smart Contracts",
-	"version": "1.4.4",
+	"version": "1.5.1",
 	"main": "index.js",
 	"devDependencies": {
 		"@chainlink/contracts": "^0.8.0",
@@ -59,6 +59,7 @@
 		"typings-copy-deployments": "copyfiles -u 1 -e './deployments/**/solcInputs/**' './deployments/**/*.*' 'ufarm-evm-typings/build/deployments'",
 		"typings-prebuild": "npm run typings-copy-artifacts && npm run typings-copy-deployments",
 		"run-swaps": "npx hardhat run --no-compile scripts/pool-data.ts",
+		"run-quex": "npx hardhat run --no-compile scripts/sendQuexLogic.ts",
 		"run-univ2-rates": "npx hardhat run --no-compile scripts/setUniV2Rate.ts"
 		
 	},

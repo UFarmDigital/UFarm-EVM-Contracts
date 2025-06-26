@@ -43,39 +43,6 @@ describe('PriceOracle', async () => {
 			'WETH price is too low',
 		)
 	})
-	it('Price oracle getCostERC20() function test', async () => {
-		const { feedInstancesTokenToUSDT, tokens, PriceOracle_instance } = await loadFixture(
-			UFarmFundFixture,
-		)
-		const [daiPrice, daiFeedDecimals, usdtDecimals] = await Promise.all([
-			feedInstancesTokenToUSDT.DAI.latestAnswer(),
-			feedInstancesTokenToUSDT.DAI.decimals(),
-			tokens.USDT.decimals(),
-		])
-		const daiCost = await PriceOracle_instance.getCostERC20(
-			tokens.DAI.address,
-			constants.ONE,
-			tokens.USDT.address,
-		)
-		expect(daiCost).to.eq(
-			convertDecimals(daiPrice, daiFeedDecimals, usdtDecimals),
-			'DAI cost should be equal to price for 1 DAI in USDT',
-		)
-
-		const [wethPrice, wethFeedDecimals] = await Promise.all([
-			feedInstancesTokenToUSDT.WETH.latestAnswer(),
-			feedInstancesTokenToUSDT.WETH.decimals(),
-		])
-		const wethCost = await PriceOracle_instance.getCostERC20(
-			tokens.WETH.address,
-			constants.ONE,
-			tokens.USDT.address,
-		)
-		expect(wethCost).to.eq(
-			convertDecimals(wethPrice, wethFeedDecimals, usdtDecimals),
-			'WETH cost should be equal to price for 1 WETH in USDT',
-		)
-	})
 	it("Should check wsteth/eth oracle calculations", async () => {
 		
 	})

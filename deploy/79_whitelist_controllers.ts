@@ -17,6 +17,7 @@ const whitelistControllers: DeployFunction = async function (hre: HardhatRuntime
 	const uniV2Controller_deployment = await hre.deployments.get('UniV2Controller')
 	const uniV3Controller_deployment = await hre.deployments.get('UniV3Controller')
 	const oneInchController_deployment = await hre.deployments.get('OneInchV5Controller')
+	const arbitraryController_deployment = await hre.deployments.get('ArbitraryController')
 
 	const ufarmCore_deployment = await hre.deployments.get('UFarmCore')
 	const ufarmCore_instance = getInstanceFromDeployment<UFarmCore>(hre, ufarmCore_deployment)
@@ -32,6 +33,7 @@ const whitelistControllers: DeployFunction = async function (hre: HardhatRuntime
 		UniV2Controller: uniV2Controller_deployment,
 		UniV3Controller: uniV3Controller_deployment,
 		OneInchV5Controller: oneInchController_deployment,
+		ArbitraryController: arbitraryController_deployment,
 	})) {
 		const controllerInstance = getInstanceFromDeployment<IController>(hre, deployment)
 		const protocolName = await controllerInstance.PROTOCOL()
@@ -121,5 +123,6 @@ whitelistControllers.dependencies = _deployTags([
 	'UniV2Controller',
 	'UniV3Controller',
 	'OneInchV5Controller',
+	'ArbitraryController',
 ])
 whitelistControllers.tags = _deployTags(['WhitelistControllers'])

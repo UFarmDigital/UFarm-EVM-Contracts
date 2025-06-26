@@ -76,6 +76,11 @@ const DEFAULT_COMPILER_SETTINGS_16 = {
 const DEFAULT_COMPILER_SETTINGS_20 = {
 	version: '0.8.20',
 	settings: {
+        outputSelection: {
+			'*': {
+			  '*': ['storageLayout'],
+			},
+		},
 		optimizer: {
 			enabled: true,
 			runs: 100_000,
@@ -118,9 +123,9 @@ const DEFAULT_COMPILER_SETTINGS_12 = {
 }
 
 const UFARM_POOL_COMPILER_SETTINGS = {
-	...DEFAULT_COMPILER_SETTINGS_20,
+	...DEFAULT_COMPILER_SETTINGS_24,
 	settings: {
-		...DEFAULT_COMPILER_SETTINGS_20.settings,
+		...DEFAULT_COMPILER_SETTINGS_24.settings,
 		viaIR: true,
 		optimizer: {
 			enabled: true,
@@ -142,6 +147,14 @@ const UFARM_UNOSWAPV3_CONTROLLER_COMPILER_SETTINGS = {
 }
 
 const UNOSWAP_V2_CONTROLLER_COMPILER_SETTINGS = {
+	...DEFAULT_COMPILER_SETTINGS_24,
+	settings: {
+		...DEFAULT_COMPILER_SETTINGS_24.settings,
+		viaIR: true,
+	},
+}
+
+const QUEX_CORE_COMPILER_SETTINGS = {
 	...DEFAULT_COMPILER_SETTINGS_24,
 	settings: {
 		...DEFAULT_COMPILER_SETTINGS_24.settings,
@@ -362,6 +375,12 @@ const config: HardhatUserConfig = {
 			},
 			'contracts/test/ufarmLocal/controllers/UniswapV3ControllerUFarm.sol': {
 				...UFARM_UNOSWAPV3_CONTROLLER_COMPILER_SETTINGS,
+			},
+			'contracts/test/Quex/QuexCore.sol': {
+				...QUEX_CORE_COMPILER_SETTINGS,
+			},
+			'contracts/test/Quex/QuexPool.sol': {
+				...QUEX_CORE_COMPILER_SETTINGS,
 			},
 		},
 	},

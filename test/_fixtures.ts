@@ -45,6 +45,8 @@ import {
 	WstETHOracle,
 	UnoswapV3Controller,
 	OneInchV5Controller,
+	QuexCore,
+	QuexPool,
 } from '../typechain-types'
 
 import {
@@ -72,24 +74,6 @@ import {
 	isTestnet,
 	getNetworkType,
 } from '../scripts/_deploy_helpers'
-
-export async function getCostOfToken(
-	stable: string,
-	token: string,
-	account: string,
-	core: UFarmCore,
-): Promise<BigNumberish> {
-	const tokenInstance = (await ethers.getContractAt(
-		'@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol:IERC20Metadata',
-		token,
-	)) as IERC20Metadata
-
-	const amountIn = await tokenInstance.balanceOf(account)
-
-	const priceOracle = await ethers.getContractAt('PriceOracle', await core.priceOracle())
-	const cost = await priceOracle.getCostERC20(token, amountIn, stable)
-	return cost
-}
 
 export async function getPriceRate(
 	tokenPriceOf: string,
@@ -216,6 +200,7 @@ export async function ETHPoolFixture() {
 		poolArgs,
 		tokens,
 		UnoswapV2Controller_instance,
+		QuexCore_instance,
 		...rest
 	} = await loadFixture(fundWithPoolFixture)
 	const ETHPoolArgs = poolArgs
@@ -234,7 +219,7 @@ export async function ETHPoolFixture() {
 	)
 
 	await UFarmFund_instance.depositToPool(ethPool_instance.pool.address, MANAGERS_INVESTMENT)
-
+	await QuexCore_instance.sendResponse(ethPool_instance.pool.address, 0)
 	await ethPool_instance.admin.changePoolStatus(constants.Pool.State.Active)
 
 	await _poolSwapUniV2(ethPool_instance.pool, UnoswapV2Controller_instance, MANAGERS_INVESTMENT, [
@@ -253,6 +238,7 @@ export async function ETHPoolFixture() {
 		ETHPoolArgs,
 		MANAGERS_INVESTMENT,
 		UnoswapV2Controller_instance,
+		QuexCore_instance,
 		...rest,
 	}
 }
@@ -349,6 +335,14 @@ export async function UFarmFundFixture() {
 		address_UFarmFund,
 		alice,
 	)
+
+	const tx = {
+		to: UFarmFund_instance.address,
+		value: ethers.utils.parseEther("1.0"),
+	};
+	  
+	const txResponse = await alice.sendTransaction(tx);
+	await txResponse.wait();
 
 	const allPoolPermissionsMask = bitsToBigNumber(
 		Array.from(Object.values(constants.Pool.Permissions)),
@@ -542,6 +536,12 @@ export async function OneInchFixture() {
 export async function PriceOracleFixture() {
 	const { deployer, tokens, ...rest } = await loadFixture(MockedAggregatorFixture)
 
+	await runDeployTag(hre, 'QuexCore')
+	const QuexCore_instance = (await getInstanceOfDeployed<QuexCore>(hre, 'QuexCore')).connect(deployer)
+	
+	await runDeployTag(hre, 'QuexPool')
+	const QuexPool_instance = (await getInstanceOfDeployed<QuexPool>(hre, 'QuexPool')).connect(deployer)
+
 	await runDeployTag(hre, 'PriceOracle')
 	const PriceOracle_factory = (await ethers.getContractFactory(
 		'PriceOracle',
@@ -567,6 +567,8 @@ export async function PriceOracleFixture() {
 		PriceOracle_instance,
 		PriceOracle_factory,
 		UnoswapV2Controller_instance,
+		QuexCore_instance,
+		QuexPool_instance,
 		...rest,
 	}
 }

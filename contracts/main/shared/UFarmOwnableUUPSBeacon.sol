@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.24;
 
-import {UFarmOwnableUUPS} from './UFarmOwnableUUPS.sol';
+import {UFarmOwnableUUPS} from "./UFarmOwnableUUPS.sol";
 // import {IBeaconUpgradeable} from '@openzeppelin/contracts-upgradeable/proxy/beacon/IBeaconUpgradeable.sol';
 
 /**

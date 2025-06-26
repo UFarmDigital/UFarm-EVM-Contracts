@@ -105,6 +105,8 @@ enum DeployTags {
 	UniV3,
 	UniV3Pairs,
 	OneInch,
+	QuexCore,
+	QuexPool,
 	// Internal deployments
 	WstETHOracle,
 	PriceOracle,
@@ -117,6 +119,7 @@ enum DeployTags {
 	UniV2Controller,
 	UniV3Controller,
 	OneInchV5Controller,
+	ArbitraryController,
 	// Actions
 	InitializeUFarm,
 	WhiteListTokens,
@@ -187,16 +190,16 @@ export const getPriceOracleContract = (network: Network) => {
 	switch (getNetworkType(network)) {
 		case 'arbitrum':
 			return {
-				contract: 'PriceOracleArbitrum',
-				args: [{ sequencerUptimeFeed: '0xFdB631F5EE196F0ed6FAa767959853A9F217697D' }],
-				initFunc: '__init__PriceOracleArbitrum',
+				contract: 'PriceOracle',
+				args: [{ _quexCore: '0xD8a37e96117816D43949e72B90F73061A868b387' }],
+				initFunc: '__init__PriceOracle',
 			}
 			break
 		default:
 			console.log('THIS IS NOT ARB')
 			return {
 				contract: 'PriceOracle',
-				args: [],
+				args: [{ _quexCore: null }],
 				initFunc: '__init__PriceOracle',
 			}
 			break
@@ -650,7 +653,7 @@ export async function deployBeaconContract(
 	hre: HardhatRuntimeEnvironment,
 	contractName: string,
 	signer: SignerWithAddress,
-	opts?: DeployBeaconOptions | undefined,
+	opts?: DeployBeaconOptions | UpgradeBeaconOptions | undefined,
 ): Promise<DeployResult> {
 	let instance = null
 
@@ -663,11 +666,11 @@ export async function deployBeaconContract(
 	)
 
 	if (existingDeployment) {
-		const implAddress = hre.upgrades.beacon.getImplementationAddress(existingDeployment.address)
+		const implAddress = await hre.upgrades.beacon.getImplementationAddress(existingDeployment.address)
 		const bytecode = await hre.ethers.provider.getCode(implAddress)
 
 		if (contractFactory.bytecode !== bytecode) {
-			console.log(`Upgrading already existing contract ${contractName}`)
+			console.log(`Upgrading already existing contract ${contractName}: ${existingDeployment.address}`)
 			instance = await retryOperation(async () => {
 				return await hre.upgrades.upgradeBeacon(existingDeployment.address, contractFactory, opts)
 			}, 3)
@@ -989,4 +992,68 @@ export const whitelistTokensWithAggregator = async <T extends AggregatorV2V3Inte
 
 		console.log('Tokens updated!')
 	}
+}
+
+export const whitelistValueTokens = async (
+	hre: HardhatRuntimeEnvironment,
+) => {
+	const deployerSigner = await getDeployerSigner(hre)
+	const tokenDeployments = await getTokenDeployments(hre)
+
+	const ufarmCore_instance = getInstanceFromDeployment<UFarmCore>(
+		hre,
+		await hre.deployments.get('UFarmCore'),
+	).connect(deployerSigner)
+
+	console.log('\nWhitelisting value tokens...')
+
+	// Filter for USDT and USDC tokens
+	const valueTokenAddresses: string[] = []
+	const valueTokenNames: string[] = ['USDT', 'USDC']
+
+	for (const tokenName of valueTokenNames) {
+		if (tokenDeployments[tokenName]) {
+			valueTokenAddresses.push(tokenDeployments[tokenName].address)
+			console.log(`Adding ${tokenName} as a value token...`)
+		} else {
+			console.warn(`Token ${tokenName} not found in deployments, skipping...`)
+		}
+	}
+
+	if (valueTokenAddresses.length === 0) {
+		console.log(`No value tokens to whitelist!`)
+		return
+	}
+
+	// Check if tokens are already whitelisted as value tokens
+	const tokensToWhitelist: string[] = []
+	for (const tokenAddress of valueTokenAddresses) {
+		const isValueTokenWhitelisted = await ufarmCore_instance.isValueTokenWhitelisted(tokenAddress)
+		if (isValueTokenWhitelisted) {
+			console.log(`Token ${tokenAddress} already whitelisted as a value token.`)
+			continue
+		}
+		tokensToWhitelist.push(tokenAddress)
+	}
+
+	if (tokensToWhitelist.length === 0) {
+		console.log(`All value tokens already whitelisted!`)
+		return
+	}
+
+	console.log(`Whitelisting value tokens: ${tokensToWhitelist.join(', ')}`)
+
+	await retryOperation(async () => {
+		await hre.deployments.execute(
+			'UFarmCore',
+			{
+				from: deployerSigner.address,
+				log: true,
+			},
+			'whitelistValueTokens',
+			tokensToWhitelist,
+		)
+	}, 3)
+
+	console.log('Value tokens whitelisted!')
 }

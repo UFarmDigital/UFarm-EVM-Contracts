@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-pragma solidity ^0.8;
-import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
+pragma solidity ^0.8.24;
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /**
  * @title ECDSARecover
@@ -19,7 +19,7 @@ abstract contract ECDSARecover {
 	// Safe to use, because it is constant
 	/// @custom:oz-upgrades-unsafe-allow state-variable-assignment state-variable-immutable
 	bytes32 private immutable DOMAIN_STRUCTURE_HASH =
-		keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)');
+		keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
 	/**
 	 * @notice EIP712 Domain Separator
@@ -77,7 +77,7 @@ abstract contract ECDSARecover {
 		bytes32 domainHash,
 		bytes32 msgHash
 	) internal pure returns (bytes32) {
-		return keccak256(abi.encodePacked('\x19\x01', domainHash, msgHash));
+		return keccak256(abi.encodePacked("\x19\x01", domainHash, msgHash));
 	}
 
 	/**

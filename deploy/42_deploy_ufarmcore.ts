@@ -9,17 +9,11 @@ const deployUFarmCore: DeployFunction = async function (hre: HardhatRuntimeEnvir
 
 	console.log('\nDeploying UFarmCore...')
 
-	const currentUFarmCoreDeployment = await hre.deployments.getOrNull('UFarmCore')
+	const res = await deployProxyContract(hre, 'UFarmCore', deployerSigner, undefined, {
+		kind: 'uups',
+	})
 
-	if (currentUFarmCoreDeployment) {
-		console.log(`Already deployed at: ${currentUFarmCoreDeployment.address}`)
-	} else {
-		const res = await deployProxyContract(hre, 'UFarmCore', deployerSigner, undefined, {
-			kind: 'uups',
-		})
-
-		console.log(`UFarmCore deployed at: ${res.address}`)
-	}
+	console.log(`UFarmCore deployed at: ${res.address}`)
 
 	console.log('\n UFarmCore deployed!')
 }

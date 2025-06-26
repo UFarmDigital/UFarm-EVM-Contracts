@@ -1,7 +1,15 @@
+# system
 .git
-.env
+docker-compose*
+
+# nodejs
+.env*
 npm-debug.log
 node_modules
+
+# artifacts
+docs
+cache
 artifacts
 deployments
-docker-compose*
+typechain-types

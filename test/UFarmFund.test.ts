@@ -136,7 +136,7 @@ describe('UFarmFund', function () {
 			await expect(UFarmFund_instance.createPool(poolArgs, tempSalt())).to.be.not.reverted
 		})
 		it('Fund can deposit and withdraw from pools when its approved', async function () {
-			const { UFarmFund_instance, poolArgs, tokens, alice } = await loadFixture(UFarmFundFixture)
+			const { UFarmFund_instance, poolArgs, tokens, alice, QuexCore_instance } = await loadFixture(UFarmFundFixture)
 
 			expect(await UFarmFund_instance.status()).to.equal(0) // 0 = Approved
 
@@ -144,25 +144,25 @@ describe('UFarmFund', function () {
 
 			await tokens.USDT.mint(UFarmFund_instance.address, constants.ONE_HUNDRED_BUCKS.mul(2))
 
-			await expect(() =>
-				UFarmFund_instance.depositToPool(newPool.pool.address, constants.ONE_HUNDRED_BUCKS),
-			).to.changeTokenBalance(tokens.USDT, UFarmFund_instance, constants.ONE_HUNDRED_BUCKS.mul(-1))
-
+			await UFarmFund_instance.depositToPool(newPool.pool.address, constants.ONE_HUNDRED_BUCKS)
+			await expect(await QuexCore_instance.sendResponse(newPool.pool.address, 0)).to.changeTokenBalance(tokens.USDT, UFarmFund_instance, constants.ONE_HUNDRED_BUCKS.mul(-1))
+			
 			const signedWithdrawalRequest = await _signWithdrawRequest(newPool.pool, alice, {
 				sharesToBurn: constants.ONE_HUNDRED_BUCKS,
+				minOutputAmount: ethers.utils.parseUnits('0', 6),
 				salt: protocolToBytes32('anySalt'),
 				poolAddr: newPool.pool.address,
 			} as WithdrawRequestStruct)
 
-			await expect(() =>
-				UFarmFund_instance.withdrawFromPool({
-					body: signedWithdrawalRequest.msg,
-					signature: signedWithdrawalRequest.sig,
-				}),
+			await UFarmFund_instance.withdrawFromPool({
+				body: signedWithdrawalRequest.msg,
+				signature: signedWithdrawalRequest.sig,
+			}, tokens.USDT.address)
+			await expect(await QuexCore_instance.sendResponse(newPool.pool.address, constants.ONE_HUNDRED_BUCKS),
 			).to.changeTokenBalance(tokens.USDT, UFarmFund_instance, constants.ONE_HUNDRED_BUCKS)
 		})
 		it('Fund can deposit and withdraw from pools when its active', async function () {
-			const { UFarmFund_instance, poolArgs, tokens, alice } = await loadFixture(UFarmFundFixture)
+			const { UFarmFund_instance, poolArgs, tokens, alice, QuexCore_instance } = await loadFixture(UFarmFundFixture)
 
 			await UFarmFund_instance.changeStatus(1) // 1 = Active
 
@@ -172,21 +172,22 @@ describe('UFarmFund', function () {
 
 			await tokens.USDT.mint(UFarmFund_instance.address, constants.ONE_HUNDRED_BUCKS.mul(2))
 
-			await expect(() =>
-				UFarmFund_instance.depositToPool(newPool.pool.address, constants.ONE_HUNDRED_BUCKS),
-			).to.changeTokenBalance(tokens.USDT, UFarmFund_instance, constants.ONE_HUNDRED_BUCKS.mul(-1))
+			UFarmFund_instance.depositToPool(newPool.pool.address, constants.ONE_HUNDRED_BUCKS)
+			await expect(await QuexCore_instance.sendResponse(newPool.pool.address, 0)).to.changeTokenBalance(tokens.USDT, UFarmFund_instance, constants.ONE_HUNDRED_BUCKS.mul(-1))
 
 			const signedWithdrawalRequest = await _signWithdrawRequest(newPool.pool, alice, {
 				sharesToBurn: constants.ONE_HUNDRED_BUCKS,
+				minOutputAmount: ethers.utils.parseUnits('0', 6),
 				salt: protocolToBytes32('anySalt'),
 				poolAddr: newPool.pool.address,
 			} as WithdrawRequestStruct)
 
+			await UFarmFund_instance.withdrawFromPool({
+				body: signedWithdrawalRequest.msg,
+				signature: signedWithdrawalRequest.sig,
+			}, tokens.USDT.address)
 			await expect(() =>
-				UFarmFund_instance.withdrawFromPool({
-					body: signedWithdrawalRequest.msg,
-					signature: signedWithdrawalRequest.sig,
-				}),
+				QuexCore_instance.sendResponse(newPool.pool.address, constants.ONE_HUNDRED_BUCKS),
 			).to.changeTokenBalance(tokens.USDT, UFarmFund_instance, constants.ONE_HUNDRED_BUCKS)
 		})
 	})

@@ -5,6 +5,7 @@ import path from 'path'
 
 const sourceDirectories = [
 	'./artifacts/contracts/main/contracts',
+	'./artifacts/@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol',
 	'./artifacts/contracts/test/UniswapV3/@uniswap/v3-core/contracts/UniswapV3Pool.sol',
     './artifacts/contracts/test/UniswapV3/@uniswap/v3-periphery/contracts/SwapRouter.sol',
     './artifacts/contracts/test/UniswapV3/@uniswap/v3-periphery/contracts/NonfungiblePositionManager.sol',

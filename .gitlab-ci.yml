@@ -1,7 +1,7 @@
-image: docker:24.0.6
+image: docker:24.0.7
 
 services:
-  - docker:24.0.6-dind
+  - docker:24.0.7-dind
 
 stages:
   - test
