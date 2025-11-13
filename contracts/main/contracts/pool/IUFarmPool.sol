@@ -143,6 +143,12 @@ interface IUFarmPool {
     event PoolStatusChanged(PoolStatus newStatus);
 
     /**
+     * @notice Emitted when minimum client tier requirement is updated
+     * @param minClientTier - new minimum client verification tier
+     */
+    event ClientTierRequirementUpdated(uint8 minClientTier);
+
+    /**
      * @notice Emitted when a controller function is called
      * @param controllerHashedName - controller name
      */
@@ -160,6 +166,7 @@ interface IUFarmPool {
     error QuexRequestInProgress();
     error NotAllowedToUseArbController(address ufarmFund);
     error ActionProhibited();
+    error ActionDelayNotPassed(uint256 availableAt);
     error QueueIsFull();
 
     /**

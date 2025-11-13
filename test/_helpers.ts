@@ -378,7 +378,6 @@ export function uniV3_tokensFeesToPath(tokenFees: (number | string)[]) {
 		} else {
 			path += ethers.utils.solidityPack(['address'], [value]).split('0x')[1]
 		}
-		console.log(`path: ${path}`)
 	}
 	return path
 }
@@ -1754,6 +1753,97 @@ export async function _signDepositRequest(
 	}
 }
 
+export type TierVerificationSignature = {
+	clientVerification: {
+		signature: string
+		validTill: BigNumberish
+		tier: number
+	}
+	hash: string
+	messageHash: string
+}
+
+export async function _signTierVerification(
+	pool_instance: UFarmPool,
+	verifier: SignerWithAddress,
+	investor: string,
+	tier: number,
+	validTill?: BigNumberish,
+): Promise<TierVerificationSignature> {
+	const domainData = await getDomainData(pool_instance)
+
+	const domainHash = ethers.utils.solidityKeccak256(
+		['bytes'],
+		[
+			ethers.utils.arrayify(
+				ethers.utils.defaultAbiCoder.encode(
+					['bytes32', 'bytes32', 'bytes32', 'uint256', 'address'],
+					[
+						_hashStr(constants.domain_string),
+						_hashStr(domainData.name),
+						_hashStr(domainData.version),
+						domainData.chainId,
+						domainData.verifyingContract,
+					],
+				),
+			),
+		],
+	)
+
+	const resolvedValidTill = BigNumber.from(
+		validTill ??
+			(BigNumber.from(await getBlockchainTimestamp(ethers.provider)).add(time.duration.hours(1))),
+	)
+
+	const tierAsNumber = BigNumber.from(tier).toNumber()
+	if (tierAsNumber < 0 || tierAsNumber > 255) {
+		throw new Error('Tier must fit into uint8')
+	}
+
+	const tierVerificationString =
+		'ClientVerification(address investor,uint8 tier,uint128 validTill)'
+
+	const tierVerificationHash = ethers.utils.solidityKeccak256(
+		['bytes'],
+		[
+			ethers.utils.arrayify(
+				ethers.utils.defaultAbiCoder.encode(
+					['bytes32', 'address', 'uint8', 'uint128'],
+					[_hashStr(tierVerificationString), investor, tierAsNumber, resolvedValidTill],
+				),
+			),
+		],
+	)
+
+	const eip712MsgHash = _toEIP712MsgHash(domainHash, tierVerificationHash)
+
+	const signature = await verifier._signTypedData(
+		domainData,
+		{
+			ClientVerification: [
+				{ name: 'investor', type: 'address' },
+				{ name: 'tier', type: 'uint8' },
+				{ name: 'validTill', type: 'uint128' },
+			],
+		},
+		{
+			investor,
+			tier: tierAsNumber,
+			validTill: resolvedValidTill,
+		},
+	)
+
+	return {
+		clientVerification: {
+			signature,
+			validTill: resolvedValidTill,
+			tier: tierAsNumber,
+		},
+		hash: eip712MsgHash,
+		messageHash: tierVerificationHash,
+	}
+}
+
 export async function increasedGasLimitWrapper<T extends { gasLimit?: BigNumberish }>(
 	transaction: T,
 	provider: JsonRpcProvider,
@@ -2016,6 +2106,7 @@ export const constants = {
 	domain_string:
 		'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)',
 	Date: {
+		FIVE_MIN: 300,
 		DAY,
 		DAYS,
 		WEEK,
@@ -2118,6 +2209,8 @@ export const constants = {
 			ManageWhitelist: 10,
 			ManageAssets: 11,
 			TurnPauseOn: 12,
+			ManageQuexFeed: 13,
+			VerifyClient: 14,
 		},
 		Roles: {
 			MemberRole: [0],
@@ -2125,6 +2218,7 @@ export const constants = {
 			TeamManagerRole: [2, 3, 4],
 			ModeratorRole: [5, 6, 7, 8, 9, 10, 11],
 			CrisisManagerRole: [12],
+			BackendRole: [5, 14],
 		},
 	},
 	UniV3: {

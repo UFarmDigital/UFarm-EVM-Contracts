@@ -9,7 +9,6 @@ import {
 	retryOperation,
 	getPriceOracleContract,
 	_deployTags,
-	getNetworkType,
 } from '../scripts/_deploy_helpers'
 import { FundFactory, PoolFactory, PriceOracle, QuexCore, UFarmCore } from '../typechain-types'
 
@@ -43,11 +42,10 @@ const initContracts: DeployFunction = async function (hre: HardhatRuntimeEnviron
 	if ((await ufarmCore_instance.priceOracle()) !== priceOracle_instance.address) {
 		console.log('Initializing PriceOracle...')
 
-		const args = [ufarmCore_instance.address].concat(
-			thisNetworkPriceOracle.args.map((arg) => 
-				arg._quexCore || quexCore_instance?.address || AddressZero
-			),
-		)
+		const args = [
+			ufarmCore_instance.address,
+			thisNetworkPriceOracle.args._quexCore || quexCore_instance?.address,
+		]
 		console.log('args:', args)
 
 		await retryOperation(async () => {
@@ -78,9 +76,7 @@ const initContracts: DeployFunction = async function (hre: HardhatRuntimeEnviron
 					log: true,
 				},
 				'setQuexCore',
-				thisNetworkPriceOracle.args.map((arg) =>
-					arg._quexCore || quexCore_instance?.address || AddressZero
-				),
+				thisNetworkPriceOracle.args._quexCore || quexCore_instance?.address || AddressZero,
 			)
 		}, 3)
 

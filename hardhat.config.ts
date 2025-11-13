@@ -1,5 +1,5 @@
 import * as dotenv from 'dotenv'
-import { HardhatUserConfig, extendConfig, extendEnvironment } from 'hardhat/config'
+import { HardhatUserConfig, extendEnvironment } from 'hardhat/config'
 import '@nomicfoundation/hardhat-toolbox'
 import 'hardhat-docgen'
 import '@dlsl/hardhat-markup'
@@ -10,6 +10,19 @@ import 'hardhat-tracer'
 import 'hardhat-contract-sizer'
 import './tasks'
 import 'hardhat-gas-reporter'
+import {
+    LOW_OPTIMIZER_COMPILER_SETTINGS,
+    LOWEST_OPTIMIZER_COMPILER_SETTINGS,
+    DEFAULT_COMPILER_SETTINGS_16,
+    DEFAULT_COMPILER_SETTINGS_20,
+    DEFAULT_COMPILER_SETTINGS_24,
+    DEFAULT_COMPILER_SETTINGS_15,
+    DEFAULT_COMPILER_SETTINGS_12,
+    UFARM_POOL_COMPILER_SETTINGS,
+    UFARM_UNOSWAPV3_CONTROLLER_COMPILER_SETTINGS,
+    UNOSWAP_V2_CONTROLLER_COMPILER_SETTINGS,
+    QUEX_CORE_COMPILER_SETTINGS
+} from './scripts/_compile_options';
 
 dotenv.config()
 
@@ -36,136 +49,9 @@ interface IDeployConfig {
 	initialRates: InitialRate[]
 }
 
-const LOW_OPTIMIZER_COMPILER_SETTINGS = {
-	version: '0.8.15',
-	settings: {
-		optimizer: {
-			enabled: true,
-			runs: 2_000,
-		},
-		metadata: {
-			bytecodeHash: 'none',
-		},
-	},
-}
-
-const LOWEST_OPTIMIZER_COMPILER_SETTINGS = {
-	version: '0.8.15',
-	settings: {
-		viaIR: true,
-		optimizer: {
-			enabled: true,
-			runs: 10,
-		},
-		metadata: {
-			bytecodeHash: 'none',
-		},
-	},
-}
-
-const DEFAULT_COMPILER_SETTINGS_16 = {
-	version: '0.8.16',
-	settings: {
-		optimizer: {
-			enabled: true,
-			runs: 1,
-		},
-	},
-}
-
-const DEFAULT_COMPILER_SETTINGS_20 = {
-	version: '0.8.20',
-	settings: {
-        outputSelection: {
-			'*': {
-			  '*': ['storageLayout'],
-			},
-		},
-		optimizer: {
-			enabled: true,
-			runs: 100_000,
-		},
-		metadata: {
-			bytecodeHash: 'none',
-		},
-	},
-}
-
-const DEFAULT_COMPILER_SETTINGS_24 = {
-	...DEFAULT_COMPILER_SETTINGS_20,
-	version: '0.8.24',
-}
-
-const DEFAULT_COMPILER_SETTINGS_15 = {
-	version: '0.8.15',
-	settings: {
-		optimizer: {
-			enabled: true,
-			runs: 1_000_000,
-		},
-		metadata: {
-			bytecodeHash: 'none',
-		},
-	},
-}
-
-const DEFAULT_COMPILER_SETTINGS_12 = {
-	version: '0.8.12',
-	settings: {
-		optimizer: {
-			enabled: true,
-			runs: 625,
-		},
-		metadata: {
-			bytecodeHash: 'none',
-		},
-	},
-}
-
-const UFARM_POOL_COMPILER_SETTINGS = {
-	...DEFAULT_COMPILER_SETTINGS_24,
-	settings: {
-		...DEFAULT_COMPILER_SETTINGS_24.settings,
-		viaIR: true,
-		optimizer: {
-			enabled: true,
-			runs: 55,
-		},
-	},
-}
-
-const UFARM_UNOSWAPV3_CONTROLLER_COMPILER_SETTINGS = {
-	...DEFAULT_COMPILER_SETTINGS_24,
-	settings: {
-		...DEFAULT_COMPILER_SETTINGS_24.settings,
-		viaIR: false,
-		optimizer: {
-			enabled: true,
-			runs: 500,
-		},
-	},
-}
-
-const UNOSWAP_V2_CONTROLLER_COMPILER_SETTINGS = {
-	...DEFAULT_COMPILER_SETTINGS_24,
-	settings: {
-		...DEFAULT_COMPILER_SETTINGS_24.settings,
-		viaIR: true,
-	},
-}
-
-const QUEX_CORE_COMPILER_SETTINGS = {
-	...DEFAULT_COMPILER_SETTINGS_24,
-	settings: {
-		...DEFAULT_COMPILER_SETTINGS_24.settings,
-		viaIR: true,
-	},
-}
-
 const infuraApiKey: string = process.env.INFURA_API_KEY || ''
 const quicknodeApiKey: string = process.env.QUICKNODE_API_KEY || ''
 const arbitrumRPCURL: string = process.env.ARBITRUM_RPC_URL || ''
-const isForking: boolean = process.env.FORKING === 'true'
 const ufarmDevURL: string = process.env.UFARM_DEV_URL || ''
 const ufarmDevChainID: number = parseInt(process.env.UFARM_DEV_CHAIN_ID || '1', 10)
 const ufarmDemoURL: string = process.env.UFARM_DEMO_URL || ''
@@ -197,6 +83,7 @@ const networkConfig = (chainId: number, url: string | null | undefined, verifyKe
 	verify: {
 		etherscan: {
 			apiKey: verifyKey ?? '',
+			apiUrl: verifyKey ? process.env.ETHERSCAN_VERIFY_URL : undefined,
 		},
 	},
 })
@@ -204,86 +91,74 @@ const networkConfig = (chainId: number, url: string | null | undefined, verifyKe
 const config: HardhatUserConfig = {
 	networks: {
 		hardhat: {
+			...mnemonicAccounts,
 			allowUnlimitedContractSize: false,
 			saveDeployments: true,
-			chainId: 42161,
 			forking: {
-				enabled: false,
 				url: `https://arbitrum-mainnet.infura.io/v3/${infuraApiKey}`,
+				enabled: false,
 			},
 			autoImpersonate: true,
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
 		localhost: {
+			...networkConfig(31337, null),
 			allowUnlimitedContractSize: false,
 			saveDeployments: true,
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
 		ufarmDemo: {
-			url: ufarmDemoURL,
-			chainId: ufarmDemoChainID,
+			...networkConfig(ufarmDemoChainID, ufarmDemoURL),
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
 		ufarmDemoDocker: {
-			url: 'http://rpc-node:8545',
-			chainId: ufarmDemoChainID,
+			...networkConfig(ufarmDemoChainID, 'http://rpc-node:8545'),
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
 		ufarm: {
-			url: ufarmDevURL,
-			chainId: ufarmDevChainID,
+			...networkConfig(ufarmDevChainID, ufarmDevURL),
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
 		ufarmLocal: {
-			url: 'http://localhost:8545',
-			chainId: ufarmDevChainID,
+			...networkConfig(ufarmDevChainID, 'http://localhost:8545'),
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
 		ufarmDocker: {
-			url: 'http://rpc-node:8545',
-			chainId: ufarmDevChainID,
+			...networkConfig(ufarmDevChainID, 'http://rpc-node:8545'),
 			tags: ['private', 'test'],
-			...mnemonicAccounts,
 		},
-		mainnet: networkConfig(
-			1,
-			`https://mainnet.infura.io/v3/${infuraApiKey}`,
-			process.env.ETHSCAN_API_KEY,
-		),
+		mainnet: {
+			...networkConfig(
+				1,
+				`https://mainnet.infura.io/v3/${infuraApiKey}`,
+				process.env.ETHSCAN_API_KEY,
+			),
+			tags: ['public', 'mainnet', 'ethereum'],
+		},
 		goerli: networkConfig(
 			5,
 			`https://goerli.infura.io/v3/${infuraApiKey}`,
-			process.env.ETHSCAN_API_KEY,
 		),
 		arbitrum: {
 			...networkConfig(
 				42161,
 				arbitrumRPCURL || `https://arbitrum-mainnet.infura.io/v3/${infuraApiKey}`,
-				process.env.ARBISCAN_API_KEY,
+				process.env.ETHSCAN_API_KEY,
 			),
 			tags: ['public', 'mainnet', 'arbitrum'],
 		},
 		sepolia: networkConfig(
 			11155111,
 			`https://arbitrum-sepolia.infura.io/v3/${infuraApiKey}`,
-			process.env.ARBISCAN_API_KEY,
 		),
 		arbitrumGoerli: networkConfig(
 			421613,
 			`https://arbitrum-goerli.infura.io/v3/${infuraApiKey}`,
-			process.env.ARBISCAN_API_KEY,
 		),
 		arbitrumSepolia: {
 			...networkConfig(
 				421614,
 				`https://clean-orbital-violet.arbitrum-sepolia.quiknode.pro/${quicknodeApiKey}`,
-				process.env.ARBISCAN_API_KEY,
 			),
 			live: true,
 			saveDeployments: true,

@@ -47,6 +47,7 @@ import {
 	OneInchV5Controller,
 	QuexCore,
 	QuexPool,
+	Guard2,
 } from '../typechain-types'
 
 import {
@@ -134,6 +135,9 @@ export async function _poolSwapUniV2(
 	// Find swap event:
 	const event = await getEventFromTx(tx, unoswapV2Controller, 'SwapUnoV2')
 
+	// Wait long enough before any follow-up deposit/withdraw action
+	await time.increase(6 * 60)
+
 	return {
 		amountOut: event.args.amountOut as BigNumber,
 		tx: tx,
@@ -206,6 +210,7 @@ export async function ETHPoolFixture() {
 	const ETHPoolArgs = poolArgs
 
 	const ethPool_instance = await deployPool(ETHPoolArgs, UFarmFund_instance.connect(alice))
+	await ethPool_instance.pool.setMinClientTier(0)
 
 	// Pool init
 	const MANAGERS_INVESTMENT = constants.ONE_HUNDRED_BUCKS
@@ -258,6 +263,7 @@ export async function fundWithPoolFixture() {
 	await UFarmFund_instance.connect(alice).changeStatus(1)
 
 	const UFarmPool_instance = await deployPool({ ...poolArgs }, UFarmFund_instance.connect(alice))
+	await UFarmPool_instance.pool.setMinClientTier(0)
 
 	await UFarmFund_instance.connect(alice).approveAssetTo(
 		tokens.USDT.address,
@@ -271,11 +277,13 @@ export async function fundWithPoolFixture() {
 		{ ...emptyPoolArgs, name: 'Blank Pool' },
 		UFarmFund_instance.connect(alice),
 	)
+	await blankPool_instance.pool.setMinClientTier(0)
 
 	const initialized_pool_instance = await deployPool(
 		{ ...poolArgs, name: 'Initialized Pool' },
 		UFarmFund_instance.connect(alice),
 	)
+	await initialized_pool_instance.pool.setMinClientTier(0)
 
 	await tokens.USDT.mint(UFarmFund_instance.address, constants.ONE_HUNDRED_BUCKS)
 
@@ -301,6 +309,15 @@ export async function fundWithPoolFixture() {
 		blankPool_instance,
 		initialized_pool_instance,
 		tokens,
+	}
+}
+
+export async function guardWithPoolFixture() {
+	const base = await loadFixture(fundWithPoolFixture)
+	const Guard2_instance = await getInstanceOfDeployed<Guard2>(hre, 'Guard2', base.deployer)
+	return {
+		...base,
+		Guard2_instance,
 	}
 }
 

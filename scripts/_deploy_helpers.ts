@@ -64,35 +64,19 @@ export interface TokenMetadata {
 	decimals: number
 }
 
-export interface ArbitrumOneAddr {
-	address_chain_42161: string
-}
-
 interface TokenTicker {
 	ticker: string
 }
 
-type OraclesRow = ArbitrumOneAddr & TokenTicker & {}
+export interface NetworkAddressRow {
+	[key: string]: string | undefined
+}
 
-type TokensRow = ArbitrumOneAddr &
+type TokensRow = NetworkAddressRow &
 	TokenTicker & {
 		name: string
 		decimals: number
 	}
-
-enum RequiredProtocols {
-	UniswapV2Factory = 'UniswapV2Factory',
-	UniswapV2Router02 = 'UniswapV2Router02',
-	UniswapV3Factory = 'UniswapV3Factory',
-	SwapRouter = 'SwapRouter',
-	NonfungiblePositionManager = 'NonfungiblePositionManager',
-	QuoterV2 = 'QuoterV2',
-	AggregationRouterV5 = 'AggregationRouterV5',
-	Multicall3 = 'Multicall3',
-	LidoRateOracle = 'LidoRateOracle',
-}
-
-type ProtocolsRow = ArbitrumOneAddr & { name: string; abi: string }
 
 enum DeployTags {
 	// External deployments
@@ -125,7 +109,7 @@ enum DeployTags {
 	WhiteListTokens,
 	WhitelistControllers,
 	PrepareEnvARB,
-	ArbitrumENV,
+	ProductionENV,
 	TestEnv,
 	SepoliaEnv,
 	Update1inchArb,
@@ -135,16 +119,19 @@ export function getNewContractName(controllerName: string) {
 	return `${controllerName}_NEW`
 }
 
-enum NetworkTypes {
+export enum NetworkTypes {
 	Arbitrum = 'arbitrum',
 	ArbitrumSepolia = 'arbitrumSepolia',
 	Dev = 'dev',
+	Ethereum = 'ethereum',
 }
 export function getNetworkType(network: Network) {
 	if (network.tags['arbitrum']) {
 		return NetworkTypes.Arbitrum
 	} else if (network.tags['arbitrumSepolia']) {
 		return NetworkTypes.ArbitrumSepolia
+	} else if (network.tags['ethereum']) {
+		return NetworkTypes.Ethereum
 	} else {
 		return NetworkTypes.Dev
 	}
@@ -189,20 +176,19 @@ async function readCSV<T>(path: string, filtr: (row: T) => boolean = () => true)
 export const getPriceOracleContract = (network: Network) => {
 	switch (getNetworkType(network)) {
 		case 'arbitrum':
+		case 'ethereum':
 			return {
 				contract: 'PriceOracle',
-				args: [{ _quexCore: '0xD8a37e96117816D43949e72B90F73061A868b387' }],
+				args: { _quexCore: '0x97076a3c0A414E779f7BEC2Bd196D4FdaADFDB96' },
 				initFunc: '__init__PriceOracle',
 			}
-			break
 		default:
 			console.log('THIS IS NOT ARB')
 			return {
 				contract: 'PriceOracle',
-				args: [{ _quexCore: null }],
+				args: { _quexCore: null },
 				initFunc: '__init__PriceOracle',
 			}
-			break
 	}
 }
 
@@ -264,48 +250,50 @@ export async function getPrefixedTokens(hre: HardhatRuntimeEnvironment) {
 	if (isTestnet(hre.network)) {
 		tokens = deploy_constants.tokens.testnet
 	} else {
-		const staticConfig = await getStaticConfig()
+		const networkType = getNetworkType(hre.network)
+		const addressField : string = networkType
+		if (networkType !== NetworkTypes.Arbitrum && networkType !== NetworkTypes.Ethereum) {
+			throw new Error(`This script is not meant to be run on this network: ${hre.network.name}`)
+		}
+
+		const staticConfig = await getStaticConfig(addressField)
 		const pendingTokens = staticConfig.tokens
+		try {
+			const tokensToWhitelist = pendingTokens.filter(
+				(token) =>
+					!(token.ticker.toUpperCase() === 'STETH'),
+			)
+			for (let i = 0; i < tokensToWhitelist.length; i++) {
+				const token = tokensToWhitelist[i]
+				const tokenAddress = token[addressField]
+				if (!tokenAddress || tokenAddress.length === 0) continue
 
-		switch (getNetworkType(hre.network)) {
-			case 'arbitrum':
 				try {
-					const tokensToWhitelist = pendingTokens.filter(
-						(token) =>
-							!(token.ticker.toUpperCase() === 'STETH'),
-					)
-					for (let i = 0; i < tokensToWhitelist.length; i++) {
-						const token = tokensToWhitelist[i]
-						try {
-							const rawName = token.ticker.toUpperCase()
+					const rawName = token.ticker.toUpperCase()
 
-							const contract = (await hre.ethers.getContractAt(
-								'@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol:IERC20Metadata',
-								token.address_chain_42161,
-							)) as IERC20Metadata
+					const contract = (await hre.ethers.getContractAt(
+						'@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol:IERC20Metadata',
+						tokenAddress,
+					)) as IERC20Metadata
 
-							const [symbol, decimals] = await Promise.all([contract.symbol(), contract.decimals()])
-							const tokenData = {
-								name: token.name,
-								rawName: rawName,
-								symbol: symbol,
-								decimals: decimals,
-							}
-							console.log(`Fetched metadata for token ${token.name}:`, tokenData)
-							tokens.push(tokenData)
-						} catch (error) {
-							console.error(`Error fetching metadata for token ${token.name}:`, error)
-							throw error
-						}
-						await customSetTimeout(0.5)
+					const [symbol, decimals] = await Promise.all([contract.symbol(), contract.decimals()])
+					const tokenData = {
+						name: token.name,
+						rawName: rawName,
+						symbol: symbol,
+						decimals: decimals,
 					}
+					console.log(`Fetched metadata for token ${token.name}:`, tokenData)
+					tokens.push(tokenData)
 				} catch (error) {
-					console.error('Error fetching token metadata:', error)
+					console.error(`Error fetching metadata for token ${token.name}:`, error)
 					throw error
 				}
-				break
-			default:
-				throw new Error(`This script is not meant to be run on this network: ${hre.network.name}`)
+				await customSetTimeout(0.5)
+			}
+		} catch (error) {
+			console.error('Error fetching token metadata:', error)
+			throw error
 		}
 	}
 
@@ -491,27 +479,17 @@ export async function trySaveDeployment(
 	return deployment
 }
 
-export const getStaticConfig = async () => {
-	const oracles = await readCSV(
-		'./deploy-data/oracles.csv',
-		(row: OraclesRow) => row.ticker !== '' && ethers.utils.isAddress(row.address_chain_42161),
-	)
+export const getStaticConfig = async (addressField: string) => {
 	const tokens = await readCSV(
 		'./deploy-data/tokens.csv',
 		(row: TokensRow) =>
-			row.name !== '' && row.decimals !== 0 && ethers.utils.isAddress(row.address_chain_42161),
-	)
-	const protocols = await readCSV<ProtocolsRow>(
-		'./deploy-data/protocols.csv',
-		(row: ProtocolsRow) =>
-			Object.values(RequiredProtocols).includes(row.name as RequiredProtocols) &&
-			ethers.utils.isAddress(row.address_chain_42161),
+			row.name !== '' &&
+			row.decimals !== 0 &&
+			ethers.utils.isAddress((row[addressField] ?? '') as string),
 	)
 
 	return {
-		oracles,
 		tokens,
-		protocols,
 	}
 }
 
@@ -623,10 +601,28 @@ export async function deployProxyContract(
 		const instanceOwner = await existingInstance.owner()
 
 		if (instanceOwner != ADDRESS_ZERO) {
-			console.log("Upgrade the proxy if needed")
-			instance = await retryOperation(async () => {
-				return await hre.upgrades.upgradeProxy(existingDeployment.address, contractFactory, opts)
-			}, 3) as UFarmOwnableUUPS
+			const currentImplAddress = await hre.upgrades.erc1967.getImplementationAddress(existingDeployment.address)
+			const currentImplCode = await hre.ethers.provider.getCode(currentImplAddress)
+			const currentImplHash = hre.ethers.utils.keccak256(currentImplCode)
+
+			const nextImplRuntime = contractArtifact.deployedBytecode
+			const nextImplHash =
+				nextImplRuntime && nextImplRuntime.length > 2
+					? hre.ethers.utils.keccak256(nextImplRuntime)
+					: null
+
+			if (nextImplHash && currentImplHash !== nextImplHash) {
+				console.log(
+					`Upgrading proxy ${thisDeploymentName} implementation: ${existingDeployment.address} -> ${currentImplAddress}`,
+				)
+				instance = (await retryOperation(async () => {
+					return await hre.upgrades.upgradeProxy(existingDeployment.address, contractFactory, opts)
+				}, 3)) as UFarmOwnableUUPS
+			} else {
+				console.log(
+					`Skipping upgrade for proxy ${thisDeploymentName}; implementation bytecode unchanged (${currentImplAddress})`,
+				)
+			}
 		}
 	} else {
 		console.log("Deploy the proxy")
@@ -669,11 +665,22 @@ export async function deployBeaconContract(
 		const implAddress = await hre.upgrades.beacon.getImplementationAddress(existingDeployment.address)
 		const bytecode = await hre.ethers.provider.getCode(implAddress)
 
-		if (contractFactory.bytecode !== bytecode) {
+		const currentImplHash = hre.ethers.utils.keccak256(bytecode)
+		const nextImplRuntime = contractArtifact.deployedBytecode
+		const nextImplHash =
+			nextImplRuntime && nextImplRuntime.length > 2
+				? hre.ethers.utils.keccak256(nextImplRuntime)
+				: null
+
+		if (nextImplHash && currentImplHash !== nextImplHash) {
 			console.log(`Upgrading already existing contract ${contractName}: ${existingDeployment.address}`)
 			instance = await retryOperation(async () => {
 				return await hre.upgrades.upgradeBeacon(existingDeployment.address, contractFactory, opts)
 			}, 3)
+		} else {
+			console.log(
+				`Skipping upgrade for ${contractName}; implementation bytecode unchanged (${implAddress})`,
+			)
 		}
 	} else {
 		console.log(`Deploying the new contract ${contractName}`)

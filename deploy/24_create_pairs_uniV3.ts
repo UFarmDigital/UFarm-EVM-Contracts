@@ -19,6 +19,11 @@ import {
 } from '../test/_helpers'
 
 const createUniV3Pairs: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
+	if (!isTestnet(hre.network)){
+		console.log(`Skipping Uniswap V3 pairs creation`)
+		return
+	}
+
 	async function isUniswapV3PairExist(
 		factoryContract: UniswapV3Factory,
 		token0Address: string,
@@ -74,11 +79,6 @@ const createUniV3Pairs: DeployFunction = async function (hre: HardhatRuntimeEnvi
 			}, maxRetries)
 			console.log(`${pairName} pair created!`)
 		}
-	}
-
-	if (!isTestnet(hre.network)){
-		console.log(`Skipping Uniswap V3 pairs creation`)
-		return
 	}
 
 	const tokenDeployments = await getTokenDeployments(hre)

@@ -3,8 +3,6 @@
 import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import { 
-    isTestnet, 
-    deployContract, 
     deployUpgradedContract,
     getDeployerSigner, 
     deployProxyContract, 
@@ -12,7 +10,7 @@ import {
     getInstanceFromDeployment,
     retryOperation
 } from '../scripts/_deploy_helpers'
-import { Guard, UFarmCore } from '../typechain-types'
+import { Guard2, UFarmCore } from '../typechain-types'
 
 const deployArbitraryController: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
@@ -21,21 +19,21 @@ const deployArbitraryController: DeployFunction = async function (hre: HardhatRu
     ////////////////////////// GUARD //////////////////////////
     console.log('\nDeploying Guard...')  
     const guard = await deployProxyContract(
-        hre, 
-        'Guard', 
-        deployerSigner, 
-        undefined, 
+        hre,
+        'Guard2',
+        deployerSigner,
+        undefined,
         {kind: 'uups',}
     )
     console.log(`Guard deployed at: ${guard.address}`)
     // GUARD INIT
-    const ufarmCore_instance = (getInstanceFromDeployment<UFarmCore>(hre, await hre.deployments.get('UFarmCore'))).connect(deployerSigner) 
-    const guard_instance = (getInstanceFromDeployment<Guard>(hre, await hre.deployments.get('Guard'))).connect(deployerSigner) 
+    const ufarmCore_instance = (getInstanceFromDeployment<UFarmCore>(hre, await hre.deployments.get('UFarmCore'))).connect(deployerSigner)
+    const guard_instance = (getInstanceFromDeployment<Guard2>(hre, await hre.deployments.get('Guard2'))).connect(deployerSigner)
     if (await guard_instance.ufarmCore() !== ufarmCore_instance.address) {
         console.log('\nInitializing Guard...')   
         await retryOperation(async () => {
             await hre.deployments.execute(
-                'Guard',
+                'Guard2',
                 {
                     from: deployerSigner.address,
                     log: true,

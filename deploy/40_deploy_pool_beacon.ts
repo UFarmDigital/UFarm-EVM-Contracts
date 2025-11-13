@@ -10,7 +10,7 @@ const deployPool: DeployFunction = async function (hre: HardhatRuntimeEnvironmen
 	console.log('\nDeploying UFarmPool...')
 
 	await deployBeaconContract(hre, 'UFarmPool', deployerSigner, {
-		unsafeSkipStorageCheck: true
+		unsafeSkipStorageCheck: false
 	})
 
 	console.log('\n UFarmPool deployed!')

@@ -3,6 +3,7 @@
 import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import {
+	isTestnet,
 	getDeployerSigner,
 	getInstanceFromDeployment,
 	retryOperation,
@@ -16,8 +17,8 @@ import {
 import { UFarmCore } from '../../../typechain-types'
 
 const deployUFarm: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
-	if (!hre.network.tags['arbitrum']) {
-		console.log('Not Arbitrum network, skipping UFarm Arbitrum deployment')
+	if (isTestnet(hre.network)) {
+		console.log('Skipping UFarm deployment on testnet')
 		return
 	}
 
@@ -32,8 +33,7 @@ const deployUFarm: DeployFunction = async function (hre: HardhatRuntimeEnvironme
 		ufarmOwner,
 	])) {
 		if (!hre.ethers.utils.isAddress(value) || value === hre.ethers.constants.AddressZero) {
-			console.log(`Address of ${name} is not set, ending script`)
-			return
+			console.log(`Address of ${name} is not set. Skipping...`)
 		}
 	}
 
@@ -56,13 +56,13 @@ const deployUFarm: DeployFunction = async function (hre: HardhatRuntimeEnvironme
 		return
 	}
 	const minFundDep = await ufarmCore_instance.connect(deployerSigner).minimumFundDeposit()
-	if (minFundDep.eq(0)){
+	if (minFundDep.isZero()){
 		await checkMinFundDep(ufarmCore_instance.connect(deployerSigner), constants.ONE_BUCKS.mul(1000))
 	}
 
 	// set protocol fee
 	const currentProtocolCommission = await ufarmCore_instance.protocolCommission()
-	if (!currentProtocolCommission.eq(constants.ZERO_POINT_3_PERCENTS)) {
+	if (!currentProtocolCommission || currentProtocolCommission.isZero()) {
 		console.log(`Current protocol commission is ${currentProtocolCommission}, setting to 0.3%`)
 		await ufarmCore_instance.setProtocolCommission(constants.ZERO_POINT_3_PERCENTS)
 		console.log(`Protocol commission set to 0.3%`)
@@ -100,7 +100,7 @@ const deployUFarm: DeployFunction = async function (hre: HardhatRuntimeEnvironme
 		if (ufarmFundApprover !== '') {
 			const mask = bitsToBigNumber(
 				ufarmRoles.MemberRole.concat(
-					Object.values(ufarmRoles.ModeratorRole),
+					Object.values(ufarmRoles.BackendRole),
 					Object.values(ufarmRoles.CrisisManagerRole),
 				),
 			)
@@ -124,7 +124,7 @@ const deployUFarm: DeployFunction = async function (hre: HardhatRuntimeEnvironme
 
 		if (ufarmManager !== '') {
 			const mask = bitsToBigNumber(
-				ufarmRoles.MemberRole.concat(...ufarmRoles.TeamManagerRole, ...ufarmRoles.ModeratorRole),
+				ufarmRoles.MemberRole.concat(...ufarmRoles.ModeratorRole),
 			)
 			const currentPermissions = await ufarmCore_instance.hasPermissionsMask(ufarmManager, mask)
 			if (!currentPermissions) {
@@ -159,6 +159,15 @@ const deployUFarm: DeployFunction = async function (hre: HardhatRuntimeEnvironme
 		}
 	}
 
+	// set delay after pool actions
+	const currentDelay = await ufarmCore_instance.connect(deployerSigner).postActionDelay()
+	if (!currentDelay || currentDelay.isZero()){
+		console.log(`Current action delay is ${currentDelay}, setting to 5 min`)
+		await ufarmCore_instance.setPostActionDelay(constants.Date.FIVE_MIN)
+	} else {
+		console.log(`Current action delay is ${currentDelay}`)
+	}
+
 	console.log(`Deployer: ${deployerSigner.address}`)
 	console.log(
 		`Deployers final balance: ${hre.ethers.utils.formatEther(
@@ -174,5 +183,5 @@ deployUFarm.dependencies = [
 	'WhitelistControllers',
 	'WhiteListTokens',
 ]
-deployUFarm.tags = _deployTags(['ArbitrumENV'])
+deployUFarm.tags = _deployTags(['ProductionENV'])
 export default deployUFarm

@@ -1,7 +1,7 @@
 {
 	"name": "ufarm-evm-contracts",
 	"description": "UFarm EVM Smart Contracts",
-	"version": "1.5.1",
+	"version": "1.6.0",
 	"main": "index.js",
 	"devDependencies": {
 		"@chainlink/contracts": "^0.8.0",
@@ -43,8 +43,9 @@
 		"start": "npx hardhat node",
 		"start-no-deploy": "npx hardhat node --no-deploy",
 		"start:cold": "npm install && npx hardhat node --no-impersonation --export './deployments.json'",
-		"deploy-arbitrum-like-hardhat": "npx hardhat deploy --network hardhat --tags ArbitrumENV --export './deployments-arbitrum.json'",
-		"deploy-arbitrum": "npx hardhat deploy --network arbitrum --tags ArbitrumENV --export './deployments-arbitrum.json'",
+		"deploy-arbitrum-like-hardhat": "npx hardhat deploy --network hardhat --tags ProductionENV --export './deployments-arbitrum.json'",
+		"deploy-arbitrum": "npx hardhat deploy --network arbitrum --tags ProductionENV --export './deployments-arbitrum.json'",
+		"deploy-ethereum": "npx hardhat deploy --network mainnet --tags ProductionENV --export './deployments-ethereum.json'",
 		"deploy-univ2-local": "hardhat deploy --network localhost --tags UniV2Pairs --export './deployments.json'",
 		"deploy-sepolia-all": "hardhat deploy --network arbitrumSepolia --tags SepoliaEnv --no-compile --export './deployments-arbitrumSepolia.json'",
 		"deploy-ufarm-all": "hardhat deploy --network ufarm --tags TestEnv --export './deployments.json'",

@@ -7,7 +7,8 @@ import {
 	getDeployerSigner,
 	getStaticConfig,
 	trySaveDeployment,
-	mockedAggregatorName,
+	NetworkTypes,
+	getNetworkType,
 	_deployTags,
 } from '../../../scripts/_deploy_helpers'
 
@@ -19,55 +20,32 @@ const prepareEnv: DeployFunction = async function (hre: HardhatRuntimeEnvironmen
 	const deployerSigner = await getDeployerSigner(hre)
 
 	// prepare tokens
+	const networkType = getNetworkType(hre.network)
+	const addressField : string = networkType
+	if (networkType !== NetworkTypes.Arbitrum && networkType !== NetworkTypes.Ethereum) {
+		throw new Error(`This script is not meant to be run on this network: ${hre.network.name}`)
+	}
 
-	const staticConfig = await getStaticConfig()
+	const staticConfig = await getStaticConfig(addressField)
 
 	const pendingTokens = staticConfig.tokens
 
 	for (const token of pendingTokens) {
 		const tokenRawName = token.ticker.toUpperCase()
+		const tokenAddress = token[addressField]
+
+		if (!tokenAddress || tokenAddress === '') {
+			console.log(`Token ${tokenRawName} does not have address for ${addressField}, skipping`)
+			continue
+		}
 
 		await trySaveDeployment(
 			tokenRawName,
 			{
 				from: deployerSigner.address,
-				address: token.address_chain_42161,
+				address: tokenAddress,
 				contract: '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol:IERC20Metadata',
 				deploymentName: tokenRawName,
-			},
-			hre,
-		)
-	}
-
-	const pendingAggregators = staticConfig.oracles
-
-	for (const oracle of pendingAggregators) {
-		const oracleRawName = mockedAggregatorName(oracle.ticker, hre.network)
-
-		await trySaveDeployment(
-			oracleRawName,
-			{
-				from: deployerSigner.address,
-				address: oracle.address_chain_42161,
-				contract: 'AggregatorV2V3Interface',
-				deploymentName: oracleRawName,
-			},
-			hre,
-		)
-	}
-	
-	const pendingProtocols = staticConfig.protocols
-
-	for (const protocol of pendingProtocols) {
-		const protocolRawName = protocol.name
-
-		await trySaveDeployment(
-			protocolRawName,
-			{
-				from: deployerSigner.address,
-				address: protocol.address_chain_42161,
-				contract: protocol.abi,
-				deploymentName: protocolRawName,
 			},
 			hre,
 		)
@@ -78,5 +56,3 @@ const prepareEnv: DeployFunction = async function (hre: HardhatRuntimeEnvironmen
 prepareEnv.dependencies = _deployTags([])
 prepareEnv.tags = _deployTags(['PrepareEnvARB'])
 export default prepareEnv
-
-

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-import { ABI, DeployFunction } from 'hardhat-deploy/types'
+import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import {
 	isTestnet,
@@ -130,6 +130,7 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 		fund_instance,
 		hre,
 	)
+	await (await pool_instance_1.pool.setMinClientTier(0)).wait();
 
 	await checkMinFundDep(ufarmCore_instance.connect(deployerSigner), BigNumber.from(0))
 
@@ -249,6 +250,7 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 		fund_instance,
 		hre,
 	)
+	await (await anotherPool_instance.pool.setMinClientTier(0)).wait();
 
 	const simplePool_staff = [
 		{
@@ -287,6 +289,7 @@ const testEnvSetup: DeployFunction = async function (hre: HardhatRuntimeEnvironm
 		fund_instance,
 		hre,
 	)
+	await (await poolTest3_instance.pool.setMinClientTier(0)).wait();
 
 	await activatePool(poolTest3_instance, usdt_instance, deployerSigner, hre)
 

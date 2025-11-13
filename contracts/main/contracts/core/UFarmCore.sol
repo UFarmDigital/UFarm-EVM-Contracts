@@ -104,6 +104,11 @@ contract UFarmCore is IUFarmCore, CoreWhitelist, UFarmPermissionsModel, Reentran
      * @param protocolCommission - protocol commission for the pool
      */
     event SpecificOracleChanged(address indexed pool, address oracle, uint256 protocolCommission);
+    /**
+     * @notice Emitted when the post action delay is updated
+     * @param postActionDelay - new cooldown value
+     */
+    event PostActionDelayChanged(uint256 postActionDelay);
 
     /// MODIFIERS
     /**
@@ -152,6 +157,7 @@ contract UFarmCore is IUFarmCore, CoreWhitelist, UFarmPermissionsModel, Reentran
         IUFarmCoreLink(_poolFactory).coreCallback();
 
         _updatePermissions(_admin, _FULL_PERMISSIONS_MASK);
+        _postActionDelay = 5 minutes;
     }
 
     /**
@@ -338,6 +344,25 @@ contract UFarmCore is IUFarmCore, CoreWhitelist, UFarmPermissionsModel, Reentran
     /**
      * @inheritdoc IUFarmCore
      */
+    function postActionDelay() external view override returns (uint256) {
+        return _postActionDelay;
+    }
+
+    /**
+     * @inheritdoc IUFarmCore
+     */
+    function setPostActionDelay(
+        uint256 __postActionDelay
+    ) external override ownerOrHaveTwoPermissions(uint8(Permissions.UFarm.Member), uint8(Permissions.UFarm.ManageQuexFeed)) {
+        if (_postActionDelay != __postActionDelay) {
+            _postActionDelay = __postActionDelay;
+            emit PostActionDelayChanged(__postActionDelay);
+        } else revert ActionAlreadyDone();
+    }
+
+    /**
+     * @inheritdoc IUFarmCore
+     */
     function priceOracle() external view returns (address) {
         SpecificOracle memory specificOracle = _specificOracles[msg.sender];
         if (specificOracle.oracle != address(0)) {
@@ -449,14 +474,14 @@ contract UFarmCore is IUFarmCore, CoreWhitelist, UFarmPermissionsModel, Reentran
                     _twoPermissionsToMask(
                         uint8(Permissions.UFarm.Member),
                         isMember
-                            ? uint8(Permissions.UFarm.DeleteUFarmMember) // if was member
-                            : uint8(Permissions.UFarm.UpdateUFarmMember) // else will be member
+                            ? uint8(Permissions.UFarm.UpdateUFarmMember) // if becomes member
+                            : uint8(Permissions.UFarm.DeleteUFarmMember) // else will be removed
                     )
                 );
             }
 
-            // shift left new bitmask for 2 bits, leaving only permissions (not Owner and Member roles)
-            if ((_newPermissionsMask << 2) > 0) {
+            // shift right new bitmask for 2 bits, leaving only permissions (not Owner and Member roles)
+            if ((_newPermissionsMask >> 2) > 0) {
                 _checkForPermissions(
                     msg.sender,
                     _twoPermissionsToMask(uint8(Permissions.UFarm.Member), uint8(Permissions.UFarm.UpdatePermissions))
@@ -501,5 +526,7 @@ contract UFarmCore is IUFarmCore, CoreWhitelist, UFarmPermissionsModel, Reentran
         emit PauseAction(isPaused);
     }
 
-    uint256[48] private __gap;
+    uint256 private _postActionDelay;
+
+    uint256[47] private __gap;
 }

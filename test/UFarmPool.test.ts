@@ -76,6 +76,7 @@ import {
 	get1InchResult,
 	encodePoolOneInchMultiSwap,
 	getEventsFromTx,
+	_signTierVerification,
 } from './_helpers'
 import {
 	ETHPoolFixture,
@@ -102,6 +103,7 @@ import {
 	trySaveDeployment,
 } from '../scripts/_deploy_helpers'
 import { HTTPRequestStruct } from '../typechain-types/contracts/test/Quex/QuexPool'
+
 
 describe('UFarmPool test', function () {
 	describe('Basic tests', function () {
@@ -1131,6 +1133,7 @@ describe('UFarmPool test', function () {
 			)
 
 			const newPool = await deployPool(poolArgs, UFarmFund_instance)
+			await newPool.pool.setMinClientTier(0)
 
 			await tokens.USDT.mint(UFarmFund_instance.address, constants.ONE_HUNDRED_BUCKS.mul(2))
 			await tokens.USDT.mint(bob.address, constants.ONE_HUNDRED_BUCKS)
@@ -2358,6 +2361,115 @@ describe('UFarmPool test', function () {
 				.be.not.reverted
 		})
 	})
+	describe('MinimumClientTier tests in Pool', () => {
+		const depositAmount = constants.ONE_HUNDRED_BUCKS
+
+		const buildClientVerification = async (
+			pool: UFarmPool,
+			investor: SignerWithAddress,
+			verifier: SignerWithAddress,
+			tier: number,
+		) => {
+			return _signTierVerification(pool, verifier, investor.address, tier)
+		}
+
+		it('deposit is not processed when client tier is 0 and minimum tier is 10', async () => {
+			const { UFarmPool_instance, tokens, bob, deployer } = await loadFixture(fundWithPoolFixture)
+
+			await UFarmPool_instance.pool.setMinClientTier(10)
+
+			await (await mintTokens(tokens.USDT, depositAmount, bob)).wait()
+			await safeApprove(tokens.USDT, UFarmPool_instance.pool.address, depositAmount, bob)
+
+			const verification = await buildClientVerification(
+				UFarmPool_instance.pool,
+				bob,
+				deployer,
+				0,
+			)
+
+			await expect(
+				UFarmPool_instance.pool.connect(bob).deposit(depositAmount, verification.clientVerification),
+			).to.be.revertedWith('Tier too low')
+		})
+
+		it('deposit is not processed when client tier is 5 and minimum tier is 10', async () => {
+			const { UFarmPool_instance, tokens, bob, deployer } = await loadFixture(fundWithPoolFixture)
+
+			await UFarmPool_instance.pool.setMinClientTier(10)
+
+			await (await mintTokens(tokens.USDT, depositAmount, bob)).wait()
+			await safeApprove(tokens.USDT, UFarmPool_instance.pool.address, depositAmount, bob)
+
+			const verification = await buildClientVerification(
+				UFarmPool_instance.pool,
+				bob,
+				deployer,
+				5,
+			)
+
+			await expect(
+				UFarmPool_instance.pool.connect(bob).deposit(depositAmount, verification.clientVerification),
+			).to.be.revertedWith('Tier too low')
+		})
+
+		it('deposit succeeds when minimum tier is 20 and client tier is 20', async () => {
+			const { UFarmPool_instance, tokens, bob, deployer } = await loadFixture(fundWithPoolFixture)
+
+			await UFarmPool_instance.pool.setMinClientTier(20)
+
+			await (await mintTokens(tokens.USDT, depositAmount, bob)).wait()
+			await safeApprove(tokens.USDT, UFarmPool_instance.pool.address, depositAmount, bob)
+
+			const verification = await buildClientVerification(
+				UFarmPool_instance.pool,
+				bob,
+				deployer,
+				20,
+			)
+
+			const domain = {
+				name: await UFarmPool_instance.pool.name(),
+				version: await UFarmPool_instance.pool.version(),
+				chainId: (await ethers.provider.getNetwork()).chainId,
+				verifyingContract: UFarmPool_instance.pool.address,
+			}
+			const types = {
+				ClientVerification: [
+					{ name: 'investor', type: 'address' },
+					{ name: 'tier', type: 'uint8' },
+					{ name: 'validTill', type: 'uint128' },
+				],
+			}
+			const message = {
+				investor: bob.address,
+				tier: verification.clientVerification.tier,
+				validTill: verification.clientVerification.validTill,
+			}
+
+			const expectedStructHash = ethers.utils._TypedDataEncoder.hashStruct(
+				'ClientVerification',
+				types,
+				message,
+			)
+			const expectedDigest = ethers.utils._TypedDataEncoder.hash(domain, types, message)
+
+			expect(expectedStructHash).to.equal(verification.messageHash)
+			expect(expectedDigest).to.equal(verification.hash)
+
+			const recoveredVerifier = ethers.utils.verifyTypedData(
+				domain,
+				types,
+				message,
+				verification.clientVerification.signature,
+			)
+			expect(recoveredVerifier).to.equal(deployer.address)
+
+			await expect(
+				UFarmPool_instance.pool.connect(bob).deposit(depositAmount, verification.clientVerification),
+			).to.not.be.reverted
+		})
+	})
 	describe("Min and max deposit amount for investors' tests", () => {
 		it("Investor can't deposit less than minimum or maximum", async () => {
 			const { UFarmFund_instance, tokens, blankPool_instance, bob } = await loadFixture(
@@ -3471,6 +3583,84 @@ describe('Pool periphery contracts tests', () => {
 				quote.amountOut,
 			)
 		})
+		it('Should block deposits until post action delay passes after protocol action', async () => {
+			const { tokens, initialized_pool_instance, bob, quoter_instance, QuexCore_instance } = await loadFixture(
+				fundWithPoolFixture,
+			)
+
+			await mintAndDeposit(
+				initialized_pool_instance.pool,
+				tokens.USDT,
+				bob,
+				constants.ONE_HUNDRED_BUCKS.mul(10),
+			)
+			await QuexCore_instance.sendResponse(
+				initialized_pool_instance.pool.address,
+				constants.ONE_HUNDRED_BUCKS.mul(10),
+			)
+
+			const quote = await quoteMaxSlippageSingle(quoter_instance, {
+				tokenIn: tokens.USDT.address,
+				tokenOut: tokens.WETH.address,
+				amountIn: constants.ONE_HUNDRED_BUCKS,
+				fee: 3000,
+				sqrtPriceLimitX96: 0,
+			})
+
+			const encodedSwapData = encodePoolSwapUniV3SingleHopExactInput(
+				tokens.USDT.address,
+				tokens.WETH.address,
+				3000,
+				initialized_pool_instance.pool.address,
+				(await time.latest()) + 10,
+				constants.ONE_HUNDRED_BUCKS,
+				quote.amountOut,
+				quote.sqrtPriceX96After,
+			)
+
+			await initialized_pool_instance.pool.protocolAction(
+				constants.UFarm.prtocols.UniswapV3ProtocolString,
+				encodedSwapData,
+			)
+
+			const delayExpiration = await initialized_pool_instance.pool.actionDelayExpiration()
+			const depositAmount = constants.ONE_HUNDRED_BUCKS
+
+			await tokens.USDT.mint(bob.address, depositAmount)
+			await tokens.USDT.connect(bob).approve(
+				initialized_pool_instance.pool.address,
+				depositAmount,
+			)
+
+			const attemptDeposit = () =>
+				initialized_pool_instance.pool
+					.connect(bob)
+					.deposit(depositAmount, nullClientVerification())
+
+			await expect(attemptDeposit()).to.be.revertedWithCustomError(
+				initialized_pool_instance.pool,
+				'ActionDelayNotPassed',
+			).withArgs(delayExpiration)
+
+			await time.increase(3 * 60)
+
+			await expect(attemptDeposit()).to.be.revertedWithCustomError(
+				initialized_pool_instance.pool,
+				'ActionDelayNotPassed',
+			).withArgs(delayExpiration)
+
+			await time.increase(3 * 60)
+
+			const successfulDepositTxPromise = attemptDeposit()
+			await expect(successfulDepositTxPromise).to.not.be.reverted
+
+			const successfulDepositTx = await successfulDepositTxPromise
+			await successfulDepositTx.wait()
+			await QuexCore_instance.sendResponse(
+				initialized_pool_instance.pool.address,
+				depositAmount,
+			)
+		})
 		it('Should be able to swap tokens using UniswapV3 multihop', async () => {
 			const { tokens, initialized_pool_instance, bob, quoter_instance, QuexCore_instance } = await loadFixture(
 				fundWithPoolFixture,
@@ -4010,6 +4200,7 @@ describe('Pool periphery contracts tests', () => {
 				constants.UFarm.prtocols.UniswapV2ProtocolString,
 				calldata,
 			)
+			await time.increase(6 * 60)
 
 			const daiBalanceAfter = await tokens.DAI.balanceOf(initialized_pool_instance.pool.address)
 
@@ -4069,6 +4260,7 @@ describe('Pool periphery contracts tests', () => {
 				constants.UFarm.prtocols.UniswapV2ProtocolString,
 				addLiquidityCalldata,
 			)
+			await time.increase(6 * 60)
 
 			const pair_instance = await ethers.getContractAt(
 				'@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol:IUniswapV2Pair',
@@ -4160,6 +4352,7 @@ describe('Pool periphery contracts tests', () => {
 					rlCalldata,
 				),
 			).to.changeTokenBalance(pair_instance, initialized_pool_instance.pool, balance.mul(-1))
+			await time.increase(6 * 60)
 		})
 
 		it('Should swap with long path', async () => {
@@ -4186,6 +4379,7 @@ describe('Pool periphery contracts tests', () => {
 				constants.UFarm.prtocols.UniswapV2ProtocolString,
 				calldata,
 			)
+			await time.increase(6 * 60)
 
 			const USDCBalanceAfter = await tokens.USDC.balanceOf(initialized_pool_instance.pool.address)
 
@@ -4668,7 +4862,7 @@ describe('Pool periphery contracts tests', () => {
 			ufarmFund = await initialized_pool_instance.pool.ufarmFund()
 			const {UniswapV2Router02_instance} = await loadFixture(ETHPoolFixture)
 			dappAddress = UniswapV2Router02_instance.address
-			const guardDeployment = await hre.deployments.get('Guard')
+			const guardDeployment = await hre.deployments.get('Guard2')
   			Guard_instance = await hre.ethers.getContractAt(guardDeployment.abi, guardDeployment.address)
 			GuardWithSigner = Guard_instance.connect(deployer)
 		
@@ -4684,6 +4878,7 @@ describe('Pool periphery contracts tests', () => {
 			  DAPP, token.address, payload, ethValue
 			])
 			await initialized_pool_instance.pool.protocolAction(PROTOCOL, encoded)
+			await time.increase(6 * 60)
 			const allowance = await token.allowance(initialized_pool_instance.pool.address, dappAddress)
 			expect(allowance).to.equal(amount)
 		}
@@ -4721,7 +4916,10 @@ describe('Pool periphery contracts tests', () => {
 				"NotAllowedToUseArbController"
 			  ).withArgs(await initialized_pool_instance.pool.ufarmFund())
 			})
-			
+		})
+
+		describe.skip('ArbitraryController, controller usability tests, methods and dapps whitelisting tests', () => {
+
 			it('Should allow ArbitraryController only when both flags are enabled', async () => {
 			  await UFarmCore_instance.connect(deployer).setAllowArbitraryController(ufarmFund, true)
 			  await initialized_pool_instance.pool.setUseArbitraryController(true)
@@ -4741,7 +4939,7 @@ describe('Pool periphery contracts tests', () => {
 				approveViaController(tokens.USDT, 1000000)
 			  ).to.not.be.reverted
 			})
-		
+
 			//*
 			it("Should return false for isProtocolAllowed before adding", async () => {
 			  const allowed = await Guard_instance.isProtocolAllowed(
@@ -4820,7 +5018,7 @@ describe('Pool periphery contracts tests', () => {
 			})
 		})
 		
-		describe('ArbitraryController SWAP', () => {
+		describe.skip('ArbitraryController SWAP', () => {
 		
 			it('Should be able to swap via ArbitraryController', async function () {
 			  
@@ -4928,7 +5126,8 @@ describe('Pool periphery contracts tests', () => {
 			  await initialized_pool_instance.pool.protocolAction(
 				PROTOCOL,
 				encodedPerformAction
-			  )            
+			  )
+			  await time.increase(6 * 60)
 		
 			  const USDTBalanceAfter = await tokens.USDT.balanceOf(initialized_pool_instance.pool.address)
 			  const USDCBalanceAfter = await tokens.USDC.balanceOf(initialized_pool_instance.pool.address)

@@ -43,6 +43,11 @@ interface IUFarmCore is ICoreWhitelist {
     function isPaused() external view returns (bool);
 
     /**
+     * @dev Returns the required cooldown period after pool actions.
+     */
+    function postActionDelay() external view returns (uint256);
+
+    /**
      * @dev Toggles the paused state of the UFarm protocol.
      */
     function switchPause() external;
@@ -82,6 +87,12 @@ interface IUFarmCore is ICoreWhitelist {
      * @param _protocolCommission The commission rate, expressed as a mantissa.
      */
     function setProtocolCommission(uint256 _protocolCommission) external;
+
+    /**
+     * @dev Sets the required cooldown period after pool actions.
+     * @param _postActionDelay The cooldown duration in seconds.
+     */
+    function setPostActionDelay(uint256 _postActionDelay) external;
 
     /**
      * @dev Updates the permissions for a specified UFarm member.

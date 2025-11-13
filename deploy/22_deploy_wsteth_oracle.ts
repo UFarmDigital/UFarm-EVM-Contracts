@@ -3,6 +3,7 @@
 import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import {
+	isTestnet,
 	getDeployerSigner,
 	mockedAggregatorName,
 	_deployTags,
@@ -12,6 +13,11 @@ import {
 } from '../scripts/_deploy_helpers'
 
 const deployWstETHOracle: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
+	if (!isTestnet(hre.network)) {
+		console.log('Skipping WstETHOracle deployment')
+		return
+	}
+
 	const deployerSigner = await getDeployerSigner(hre)
 
 	console.log('\nDeploying WstETHOracle...')

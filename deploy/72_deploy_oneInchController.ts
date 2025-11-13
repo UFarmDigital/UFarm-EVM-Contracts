@@ -2,11 +2,15 @@
 
 import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
-import { getDeployerSigner, _deployTags, deployUpgradedContract } from '../scripts/_deploy_helpers'
+import { isTestnet, getDeployerSigner, _deployTags, deployUpgradedContract } from '../scripts/_deploy_helpers'
 
 const deployOneInchController: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
-	const deployerSigner = await getDeployerSigner(hre)
+	if (!isTestnet(hre.network)){
+		console.log(`Skipping 1inch controller deployment`)
+		return
+	}
 
+	const deployerSigner = await getDeployerSigner(hre)
 	const oneInchDeployment = await hre.deployments.get('AggregationRouterV5')
 
 	await deployUpgradedContract(hre, {

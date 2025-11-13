@@ -2,13 +2,11 @@
 
 import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
-import { _deployTags, whitelistTokensWithAggregator, isMainnet, whitelistValueTokens } from '../scripts/_deploy_helpers'
+import { _deployTags, whitelistTokensWithAggregator, isMainnet, whitelistValueTokens, isTestnet } from '../scripts/_deploy_helpers'
 import { AggregatorV2V3Interface, UFarmMockV3Aggregator } from '../typechain-types'
 
 const whitelistTokens: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
-	if (isMainnet(hre.network)) {
-		await whitelistTokensWithAggregator<AggregatorV2V3Interface>(hre)
-	} else {
+	if (isTestnet(hre.network)) {
 		await whitelistTokensWithAggregator<UFarmMockV3Aggregator>(hre)
 	}
 

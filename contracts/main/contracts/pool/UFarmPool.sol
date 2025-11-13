@@ -61,6 +61,8 @@ contract UFarmPool is
     uint256 private constant TEN_PERCENTS = 1e17;
     uint256 private constant YEAR = 365 days;
     uint256 private constant QUEUE_LIMIT = 10;
+    bytes32 private constant CLIENT_VERIFICATION_TYPEHASH =
+        keccak256("ClientVerification(address investor,uint8 tier,uint128 validTill)");
 
     PoolStatus public status;
 
@@ -197,6 +199,8 @@ contract UFarmPool is
         if (!ICoreWhitelist(_ufarmCore).isTokenWhitelisted(_valueToken)) revert TokenIsNotAllowed(_valueToken);
 
         __decimals = ERC20(_valueToken).decimals();
+        minClientTier = 5;
+        emit ClientTierRequirementUpdated(minClientTier);
 
         _changeStatus(PoolStatus.Created);
     }
@@ -303,6 +307,7 @@ contract UFarmPool is
         address bearerToken
     ) private {
         _checkStatusForFinancing(true);
+        _ensureActionDelayPassed();
         IPoolAdmin.PoolConfig memory config = IPoolAdmin(poolAdmin).getConfig();
 
         if (depositQueue.length >= QUEUE_LIMIT) revert QueueIsFull();
@@ -320,9 +325,17 @@ contract UFarmPool is
             require(minClientTier <= clientVerification.tier, "Tier too low");
             require(block.timestamp <= clientVerification.validTill, "Signature expired");
 
+            bytes32 structHash = keccak256(
+                abi.encode(
+                    CLIENT_VERIFICATION_TYPEHASH,
+                    msg.sender,
+                    clientVerification.tier,
+                    clientVerification.validTill
+                )
+            );
             bytes32 diHash = ECDSARecover.toEIP712MessageHash(
                 DOMAIN_SEPARATOR(),
-                keccak256(abi.encodePacked(msg.sender, clientVerification.tier, clientVerification.validTill))
+                structHash
             );
             address verifier = ECDSARecover.recoverAddress(diHash, clientVerification.signature);
             UFarmPermissionsModel(_ufarmCore).checkForPermissionsMask(
@@ -421,6 +434,7 @@ contract UFarmPool is
         SignedDepositRequest[] calldata _depositRequests
     ) external ufarmIsNotPaused nonReentrant onlyFundMember {
         _checkStatusForFinancing(true);
+        _ensureActionDelayPassed();
 
         uint256 requestsLength = _depositRequests.length;
         _nonEmptyArray(requestsLength);
@@ -473,6 +487,7 @@ contract UFarmPool is
         address bearerToken
     ) private {
         _checkStatusForFinancing(false);
+        _ensureActionDelayPassed();
 
         uint256 requestsLength = _withdrawRequests.length;
         _nonEmptyArray(requestsLength);
@@ -512,6 +527,7 @@ contract UFarmPool is
         address _bearerToken
     ) external override ufarmIsNotPaused nonReentrant {
         _checkStatusForFinancing(false);
+        _ensureActionDelayPassed();
 
         if (withdrawQueue.length >= QUEUE_LIMIT) revert QueueIsFull();
 
@@ -541,6 +557,7 @@ contract UFarmPool is
         SignedWithdrawalRequest calldata _withdrawalRequest
     ) external override ufarmIsNotPaused nonReentrant {
         _checkStatusForFinancing(false);
+        _ensureActionDelayPassed();
         IPoolAdmin.PoolConfig memory config = IPoolAdmin(poolAdmin).getConfig();
 
         if (withdrawQueue.length >= QUEUE_LIMIT) revert QueueIsFull();
@@ -744,6 +761,7 @@ contract UFarmPool is
         SafeOPS._safeDelegateCall(_ignoreRevert, _controllerAddr, _data);
         delete protocolInUse;
         delete _protocolTarget;
+        actionDelayExpiration = block.timestamp + IUFarmCore(_ufarmCore).postActionDelay();
 
         emit SuccessfullControllerCall(_protocolHash);
     }
@@ -763,6 +781,12 @@ contract UFarmPool is
      */
     function _ufarmIsNotPaused() private view {
         if (IUFarmCore(_ufarmCore).isPaused()) revert UFarmIsPaused();
+    }
+
+    function _ensureActionDelayPassed() private view {
+        uint256 delayExpiration = actionDelayExpiration;
+
+        if (block.timestamp < delayExpiration) revert ActionDelayNotPassed(delayExpiration);
     }
 
     /**
@@ -1071,18 +1095,8 @@ contract UFarmPool is
         requestId = 0;
     }
 
-    function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4 magicValue) {
-        address signer = ECDSARecover.recoverAddress(hash, signature);
-        IPoolAdmin(poolAdmin).isAbleToManageFunds(signer);
-        bool signerHasPermission = UFarmPermissionsModel(address(ufarmFund)).hasPermission(
-            signer,
-            uint8(Permissions.Fund.Member)
-        );
-        if (signerHasPermission) {
-            magicValue = IERC1271.isValidSignature.selector;
-        } else {
-            magicValue = 0xffffffff;
-        }
+    function isValidSignature(bytes32, bytes memory) external pure returns (bytes4 magicValue) {
+        magicValue = 0xffffffff;
     }
 
     function setUseArbitraryController(bool value) external override {
@@ -1111,9 +1125,12 @@ contract UFarmPool is
             )
         );
         minClientTier = value;
+        emit ClientTierRequirementUpdated(value);
     }
 
     receive() external payable {}
 
-    uint256[42] private __gap;
+    uint256 public actionDelayExpiration;
+
+    uint256[41] private __gap;
 }

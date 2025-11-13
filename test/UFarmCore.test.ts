@@ -4,8 +4,7 @@ import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { time, loadFixture, takeSnapshot } from '@nomicfoundation/hardhat-network-helpers'
-import { UFarmFund } from '../typechain-types/'
-
+import { UFarmFund } from '../typechain-types'
 import { UFarmCoreFixture } from './_fixtures'
 
 import {

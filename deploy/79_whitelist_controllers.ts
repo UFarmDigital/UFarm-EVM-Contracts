@@ -3,6 +3,7 @@
 import { DeployFunction } from 'hardhat-deploy/types'
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import {
+	isTestnet,
 	_deployTags,
 	getDeployerSigner,
 	getInstanceFromDeployment,
@@ -14,11 +15,7 @@ import { IController, UFarmCore } from '../typechain-types'
 const whitelistControllers: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 	const deployerSigner = await getDeployerSigner(hre)
 
-	const uniV2Controller_deployment = await hre.deployments.get('UniV2Controller')
-	const uniV3Controller_deployment = await hre.deployments.get('UniV3Controller')
-	const oneInchController_deployment = await hre.deployments.get('OneInchV5Controller')
 	const arbitraryController_deployment = await hre.deployments.get('ArbitraryController')
-
 	const ufarmCore_deployment = await hre.deployments.get('UFarmCore')
 	const ufarmCore_instance = getInstanceFromDeployment<UFarmCore>(hre, ufarmCore_deployment)
 
@@ -29,12 +26,16 @@ const whitelistControllers: DeployFunction = async function (hre: HardhatRuntime
 
 	const whitelistedProtocols = await ufarmCore_instance.getWhitelistedProtocols()
 
-	for (const [controller, deployment] of Object.entries({
-		UniV2Controller: uniV2Controller_deployment,
-		UniV3Controller: uniV3Controller_deployment,
-		OneInchV5Controller: oneInchController_deployment,
-		ArbitraryController: arbitraryController_deployment,
-	})) {
+	const controllers = isTestnet(hre.network) ? {
+	    UniV2Controller: await hre.deployments.get('UniV2Controller'),
+	    UniV3Controller: await hre.deployments.get('UniV3Controller'),
+	    OneInchV5Controller: await hre.deployments.get('OneInchV5Controller'),
+	    ArbitraryController: arbitraryController_deployment,
+	} : {
+	    ArbitraryController: arbitraryController_deployment,
+	};
+
+	for (const [controller, deployment] of Object.entries(controllers)) {
 		const controllerInstance = getInstanceFromDeployment<IController>(hre, deployment)
 		const protocolName = await controllerInstance.PROTOCOL()
 
