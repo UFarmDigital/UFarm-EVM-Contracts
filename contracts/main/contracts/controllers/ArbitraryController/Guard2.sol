@@ -16,8 +16,15 @@ contract Guard2 is UFarmOwnableUUPS, UFarmCoreLink {
         bytes directives; // encoded directives stream
     }
 
+    struct SignDirective {
+        uint8[] directives;
+        bytes dictionary;
+    }
+
     // dapp => dappAddress => directives
     mapping(bytes32 => mapping(address => Directive[])) public whitelist;
+    // dapp => domainSeparator => directives
+    mapping(bytes32 => mapping(bytes32 => SignDirective[])) public eip712Whitelist;
 
     /**
      * @notice Emitted on whitelisting the dapp
@@ -27,6 +34,7 @@ contract Guard2 is UFarmOwnableUUPS, UFarmCoreLink {
      * @param isAllowed - flag of whitelisting: allow/deny
      */
     event WhitelistUpdated(bytes32 indexed dapp, address indexed target, bytes4 method, bool isAllowed);
+    event EIP712WhitelistUpdated(bytes32 indexed dapp, bytes32 indexed domain, bool isAllowed);
 
     // 3-bit directive types
     uint8 private constant TYPE_WILDCARD_WORDS = 0; // skip N words (32-byte words)
@@ -34,9 +42,16 @@ contract Guard2 is UFarmOwnableUUPS, UFarmCoreLink {
     uint8 private constant TYPE_SELF = 2; // compare to msg.sender; length in bytes (20 or 32)
     uint8 private constant TYPE_FROM_LIST = 3; // compare to whitelisted address; length in bytes (20 or 32)
     uint8 private constant TYPE_EXACT = 4; // exact bytes follow; length in bytes
-    uint8 private constant TYPE_WILDCARD_BYTES = 5; // NEW: skip N bytes (byte-granular)
+    uint8 private constant TYPE_WILDCARD_BYTES = 5; // skip N bytes (byte-granular)
 
-    uint256 constant MAX_DIRECTIVES_PER_ADDRESS = 25;
+    uint256 constant MAX_DIRECTIVES_PER_ADDRESS = 32;
+
+    uint8 constant EIP712_DOMAIN = 0; // data: 32 bytes domainSeparator
+    uint8 constant EIP712_BEGIN_STRUCT = 1; // data: 32 bytes typehash/seed
+    uint8 constant EIP712_FIELD = 2; // data: 32 bytes value
+    uint8 constant EIP712_END_STRUCT = 3; // data: none
+    uint8 constant EIP712_BEGIN_ARRAY = 4; // data: none
+    uint8 constant EIP712_END_ARRAY = 5; // data: none
 
     /**
      * @notice Ensures the caller is either the owner or has two specific permissions.
@@ -126,6 +141,66 @@ contract Guard2 is UFarmOwnableUUPS, UFarmCoreLink {
         dirs.pop();
 
         emit WhitelistUpdated(dapp, target, method, false);
+    }
+
+    function whitelistEIP712(
+        bytes32 dapp,
+        bytes32 domainSeparator,
+        SignDirective[] calldata directivesArray
+    ) external ownerOrHaveTwoPermissions(uint8(Permissions.UFarm.Member), uint8(Permissions.UFarm.ManageWhitelist)) {
+        if (directivesArray.length == 0) revert InvalidInput();
+
+        SignDirective[] storage dirs = eip712Whitelist[dapp][domainSeparator];
+        if (dirs.length + directivesArray.length > MAX_DIRECTIVES_PER_ADDRESS) revert InvalidInput();
+
+        for (uint256 i = 0; i < directivesArray.length; i++) {
+            SignDirective calldata directive = directivesArray[i];
+            _validateSignDirective(directive);
+
+            SignDirective storage newDir = dirs.push();
+            newDir.directives = directive.directives;
+            newDir.dictionary = directive.dictionary;
+        }
+
+        emit EIP712WhitelistUpdated(dapp, domainSeparator, true);
+    }
+
+    function unwhitelistEIP712(
+        bytes32 dapp,
+        bytes32 domainSeparator,
+        uint256 idx
+    ) external ownerOrHaveTwoPermissions(uint8(Permissions.UFarm.Member), uint8(Permissions.UFarm.ManageWhitelist)) {
+        SignDirective[] storage dirs = eip712Whitelist[dapp][domainSeparator];
+        if (idx >= dirs.length) revert IndexOutOfBounds();
+
+        dirs[idx] = dirs[dirs.length - 1];
+        dirs.pop();
+
+        emit EIP712WhitelistUpdated(dapp, domainSeparator, false);
+    }
+
+    function _validateSignDirective(SignDirective calldata directive) private pure {
+        uint8[] calldata headers = directive.directives;
+        bytes calldata dict = directive.dictionary;
+        uint256 dictLen = dict.length;
+
+        if (directive.directives.length == 0) revert InvalidInput();
+
+        for (uint256 i = 0; i < headers.length; i++) {
+            uint8 header = headers[i];
+            uint8 typ = header >> 5;
+            uint256 offset = header & 0x1F;
+
+            if (typ != TYPE_ANY && typ != TYPE_SELF && typ != TYPE_FROM_LIST && typ != TYPE_EXACT)
+                revert InvalidInput();
+
+            if (typ == TYPE_EXACT) {
+                uint256 required = (offset + 1) * 32;
+                if (dictLen < required) revert InvalidInput();
+            } else if (offset != 0) {
+                revert InvalidInput();
+            }
+        }
     }
 
     /**
@@ -227,5 +302,188 @@ contract Guard2 is UFarmOwnableUUPS, UFarmCoreLink {
         return bytes4(0);
     }
 
-    uint256[50] private __gap;
+    /**
+     * @notice Returns full EIP-712 typed-data digest if it's whitelisted
+     * @param dapp The identifier of the dApp.
+     * @param ops Encoded EIP-712 stack-machine operations that describe the message.
+     * @return retHash The EIP-712 hash if allowed, zero otherwise.
+     */
+    function eip712Hash(bytes32 dapp, bytes calldata ops) external view returns (bytes32 retHash) {
+        uint256 len = ops.length;
+        // Minimum: 1 byte opcode + 32 bytes domain
+        if (len < 33) revert InvalidInput();
+
+        uint256 idx = 0;
+
+        // ---------- DOMAIN ----------
+        if (uint8(ops[idx]) != EIP712_DOMAIN) revert InvalidInput();
+        idx++;
+
+        bytes32 domainSeparator;
+        assembly {
+            domainSeparator := calldataload(add(ops.offset, idx))
+        }
+        idx += 32;
+
+        // ---------- MESSAGE ----------
+        uint256[] memory stack = new uint256[](len + 1); // Packed frame: hi128 = start, lo128 = count
+        bool[] memory isArrayFrame = new bool[](len + 1);
+        bytes32[] memory buf = new bytes32[](len / 17 + 2); // 2 bytes per frame in the worst case
+
+        uint256 matchedDirectives = type(uint256).max;
+        uint256 fieldCount = 0;
+        uint256 bufLen = 0;
+        uint256 depth = 0;
+
+        SignDirective[] storage signDirs = eip712Whitelist[dapp][domainSeparator];
+        if (signDirs.length == 0) return bytes32(0x0);
+
+        while (idx < len) {
+            uint8 opcode = uint8(ops[idx]);
+            idx++;
+
+            if (opcode == EIP712_BEGIN_STRUCT) {
+                // BEGIN_STRUCT: 32 bytes typehash/seed
+                if (idx + 32 > len) revert IndexOutOfBounds();
+                if (depth > len) revert IndexOutOfBounds();
+
+                // Open a new frame: start = bufLen, count = 0
+                stack[depth] = uint256(bufLen) << 128;
+                isArrayFrame[depth] = false;
+                depth++;
+
+                bytes32 word;
+                assembly {
+                    word := calldataload(add(ops.offset, idx))
+                }
+                idx += 32;
+
+                buf[bufLen] = word;
+                bufLen++;
+                // increment count (low 128 bits)
+                stack[depth - 1] += 1;
+            } else if (opcode == EIP712_BEGIN_ARRAY) {
+                // BEGIN_ARRAY: no additional data
+                if (depth > len) revert IndexOutOfBounds();
+
+                stack[depth] = uint256(bufLen) << 128;
+                isArrayFrame[depth] = true;
+                depth++;
+            } else if (opcode == EIP712_FIELD) {
+                // FIELD: 32 bytes value
+                if (depth == 0) revert InvalidInput();
+                if (idx + 32 > len) revert IndexOutOfBounds();
+
+                bytes32 word;
+                assembly {
+                    word := calldataload(add(ops.offset, idx))
+                }
+                idx += 32;
+
+                // Check the field value agains the whitelist
+                matchedDirectives &= _matchDirective(signDirs, word, fieldCount, dapp);
+                fieldCount++;
+
+                buf[bufLen] = word;
+                bufLen++;
+                // increment count in current frame
+                stack[depth - 1] += 1;
+            } else if (opcode == EIP712_END_STRUCT || opcode == EIP712_END_ARRAY) {
+                // END_STRUCT/END_ARRAY: no additional data
+                if (depth == 0) revert InvalidInput();
+
+                bool arrayFrame = isArrayFrame[depth - 1];
+                if (arrayFrame && opcode != EIP712_END_ARRAY) revert InvalidInput();
+                if (!arrayFrame && opcode != EIP712_END_STRUCT) revert InvalidInput();
+
+                uint256 frame = stack[depth - 1];
+                depth--;
+
+                uint256 start = frame >> 128;
+                uint256 count = uint128(frame); // low 128 bits
+
+                if (!arrayFrame && count == 0) revert InvalidInput();
+                if (start + count > bufLen) revert IndexOutOfBounds();
+
+                bytes32 h = _hashFrame(buf, start, count);
+
+                if (depth == 0) {
+                    // This is the root message struct
+                    if (retHash != bytes32(0)) revert InvalidInput();
+                    retHash = h;
+                    bufLen = start + 1;
+                } else {
+                    // Nested struct: push its hash as a field into parent frame
+                    buf[start] = h;
+                    bufLen = start + 1;
+                    // increment parent count
+                    stack[depth - 1] += 1;
+                }
+            } else {
+                revert InvalidInput();
+            }
+        }
+
+        if (len != idx) revert InvalidInput();
+        if (depth != 0) revert InvalidInput();
+        if (retHash == bytes32(0)) revert InvalidInput();
+        if (matchedDirectives == 0) return bytes32(0x0);
+
+        // ---------- final EIP-712 digest ----------
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, retHash));
+    }
+
+    function _hashFrame(bytes32[] memory buf, uint256 start, uint256 count) private pure returns (bytes32 result) {
+        // keccak256(concat(buf[start], ..., buf[start+count-1]))
+        assembly {
+            let ptr := add(add(buf, 0x20), mul(start, 0x20))
+            result := keccak256(ptr, mul(count, 0x20))
+        }
+    }
+
+    function _matchDirective(
+        SignDirective[] storage dirs,
+        bytes32 value,
+        uint256 fieldIdx,
+        bytes32 dapp
+    ) internal view returns (uint256) {
+        uint256 matched = 0;
+        for (uint256 idx = 0; idx < dirs.length; idx++) {
+            if (fieldIdx >= dirs[idx].directives.length) continue;
+
+            uint8 header = dirs[idx].directives[fieldIdx];
+            uint8 typ = header >> 5;
+            bool isAllowed = false;
+
+            if (typ == TYPE_SELF) {
+                isAllowed = value == bytes32(uint256(uint160(msg.sender)));
+            } else if (typ == TYPE_FROM_LIST) {
+                uint256 raw = uint256(value);
+                if (raw >> 160 == 0) {
+                    Directive[] storage wlDirs = whitelist[dapp][address(uint160(raw))];
+                    isAllowed = wlDirs.length > 0 && extractSelector(wlDirs[0].directives) == bytes4(0x11111111);
+                }
+            } else if (typ == TYPE_EXACT) {
+                bytes storage dict = dirs[idx].dictionary;
+                uint256 offset = (uint256(header) & 0x1F);
+                if (dict.length >= (offset + 1) * 32) {
+                    bytes32 dictWord;
+                    assembly {
+                        let slot := dict.slot
+                        mstore(0x0, slot)
+                        let dataSlot := keccak256(0x0, 0x20)
+                        dictWord := sload(add(dataSlot, offset))
+                    }
+                    isAllowed = value == dictWord;
+                }
+            } else if (typ == TYPE_ANY) {
+                isAllowed = true;
+            }
+
+            if (isAllowed) matched |= (1 << idx);
+        }
+        return matched;
+    }
+
+    uint256[49] private __gap;
 }

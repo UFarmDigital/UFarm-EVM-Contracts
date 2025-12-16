@@ -1082,3 +1082,666 @@ describe('Guard2 test', function () {
     });
   });
 })
+
+describe('Guard2 eip-712 test', function () {
+  const DAPP_ID = ethers.utils.formatBytes32String("DAPP");
+  const TYPE_ANY = 1;
+  const TYPE_SELF = 2;
+  const TYPE_WL = 3;
+  const TYPE_EXACT = 4;
+  const OPCODE_DOMAIN = '0x00';
+  const OPCODE_BEGIN = '0x01';
+  const OPCODE_FIELD = '0x02';
+  const OPCODE_END = '0x03';
+  const OPCODE_BEGIN_ARRAY = '0x04';
+  const OPCODE_END_ARRAY = '0x05';
+  const REQUEST_TYPEHASH = ethers.utils.keccak256(
+    ethers.utils.toUtf8Bytes("Request(address to,uint256 amount)")
+  );
+  const INNER_TYPEHASH = ethers.utils.keccak256(
+    ethers.utils.toUtf8Bytes("Inner(address ref,uint256 amount)")
+  );
+  const OUTER_TYPEHASH = ethers.utils.keccak256(
+    ethers.utils.toUtf8Bytes("Outer(address to,Inner inner)Inner(address ref,uint256 amount)")
+  );
+  const MIXED_TYPEHASH = ethers.utils.keccak256(
+    ethers.utils.toUtf8Bytes("Mixed(bytes32 random,address actor,address target)")
+  );
+  const DOMAIN_SEPARATOR = ethers.utils.id("GUARD2_EIP712");
+
+  const exactHeader = (idx: number) => ((TYPE_EXACT << 5) | idx);
+  const addressWord = (addr: string) => ethers.utils.hexZeroPad(addr, 32);
+  const uintWord = (value: ethers.BigNumberish) =>
+    ethers.utils.hexZeroPad(ethers.BigNumber.from(value).toHexString(), 32);
+
+  const buildDirective = (words: string[]): Guard2.SignDirectiveStruct => ({
+    directives: words.map((_, idx) => exactHeader(idx)),
+    dictionary: ethers.utils.hexConcat(words),
+  });
+
+  const buildOps = (fields: string[], typeHash: string = REQUEST_TYPEHASH): string => {
+    let sequence = ethers.utils.hexConcat([
+      OPCODE_DOMAIN,
+      DOMAIN_SEPARATOR,
+      OPCODE_BEGIN,
+      typeHash,
+    ]);
+    for (const field of fields) {
+      sequence = ethers.utils.hexConcat([sequence, OPCODE_FIELD, field]);
+    }
+    return ethers.utils.hexConcat([sequence, OPCODE_END]);
+  };
+
+  const buildNestedOps = (toField: string, refField: string, amountField: string): string => {
+    return ethers.utils.hexConcat([
+      OPCODE_DOMAIN,
+      DOMAIN_SEPARATOR,
+      OPCODE_BEGIN,
+      OUTER_TYPEHASH,
+      OPCODE_FIELD,
+      toField,
+      OPCODE_BEGIN,
+      INNER_TYPEHASH,
+      OPCODE_FIELD,
+      refField,
+      OPCODE_FIELD,
+      amountField,
+      OPCODE_END,
+      OPCODE_END,
+    ]);
+  };
+
+  const buildArrayOps = (elements: string[], typeHash: string): string => {
+    let sequence = ethers.utils.hexConcat([
+      OPCODE_DOMAIN,
+      DOMAIN_SEPARATOR,
+      OPCODE_BEGIN,
+      typeHash,
+      OPCODE_BEGIN_ARRAY,
+    ]);
+    for (const el of elements) {
+      sequence = ethers.utils.hexConcat([sequence, OPCODE_FIELD, el]);
+    }
+    return ethers.utils.hexConcat([sequence, OPCODE_END_ARRAY, OPCODE_END]);
+  };
+
+  const buildStructArrayOps = (
+    items: Array<[string, string]>,
+    outerTypeHash: string,
+    innerTypeHash: string
+  ): string => {
+    let sequence = ethers.utils.hexConcat([
+      OPCODE_DOMAIN,
+      DOMAIN_SEPARATOR,
+      OPCODE_BEGIN,
+      outerTypeHash,
+      OPCODE_BEGIN_ARRAY,
+    ]);
+
+    for (const [refWord, amountWord] of items) {
+      sequence = ethers.utils.hexConcat([
+        sequence,
+        OPCODE_BEGIN,
+        innerTypeHash,
+        OPCODE_FIELD,
+        refWord,
+        OPCODE_FIELD,
+        amountWord,
+        OPCODE_END,
+      ]);
+    }
+
+    return ethers.utils.hexConcat([sequence, OPCODE_END_ARRAY, OPCODE_END]);
+  };
+
+  const whitelistAddressForEIP712 = async (addr: string, guard: Guard2) => {
+    const selectorHeader = (TYPE_EXACT << 5) | (4 - 1);
+    const directive = ethers.utils.hexConcat([
+      ethers.utils.hexlify([selectorHeader]),
+      "0x11111111",
+    ]);
+    await guard.whitelistProtocol(DAPP_ID, [addr], [directive]);
+  };
+
+  describe('hash calculation', function () {
+    let guard2: Guard2
+    let ownerAddr: string
+    let userAddr: string
+
+    beforeEach(async () => {
+      const { Guard2_instance } = await loadFixture(guardWithPoolFixture)
+      const [owner, user] = await ethers.getSigners();
+      ownerAddr = await owner.getAddress();
+      userAddr = await user.getAddress();
+      guard2 = Guard2_instance.connect(owner);
+    });
+
+    it("returns canonical EIP-712 hash when payload matches directives", async () => {
+      const toWord = addressWord(userAddr);
+      const amountWord = uintWord(42);
+
+      const directive = buildDirective([toWord, amountWord]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildOps([toWord, amountWord]);
+      const contractHash = await guard2.eip712Hash(DAPP_ID, ops);
+
+      const structHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([REQUEST_TYPEHASH, toWord, amountWord])
+      );
+      const expected = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, structHash])
+      );
+
+      expect(contractHash).to.equal(expected);
+    });
+
+    it("returns zero hash when any field mismatches whitelist directive", async () => {
+      const toWord = addressWord(userAddr);
+      const amountWord = uintWord(42);
+      const directive = buildDirective([toWord, amountWord]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildOps([toWord, uintWord(43)]);
+      const hash = await guard2.eip712Hash(DAPP_ID, ops);
+      expect(hash).to.equal(ethers.constants.HashZero);
+    });
+  });
+
+  describe('nested fields', function () {
+    let guard2: Guard2
+    let ownerAddr: string
+    let userAddr: string
+    let otherAddr: string
+    const selfDirective = (toWord: string, amountWord: string): Guard2.SignDirectiveStruct => ({
+      directives: [
+        (TYPE_EXACT << 5) | 0,
+        (TYPE_SELF << 5),
+        (TYPE_EXACT << 5) | 1,
+      ],
+      dictionary: ethers.utils.hexConcat([toWord, amountWord]),
+    });
+
+    beforeEach(async () => {
+      const { Guard2_instance } = await loadFixture(guardWithPoolFixture)
+      const [owner, user, other] = await ethers.getSigners();
+      ownerAddr = await owner.getAddress();
+      userAddr = await user.getAddress();
+      otherAddr = await other.getAddress();
+      guard2 = Guard2_instance.connect(owner);
+    });
+
+    it("returns canonical hash for nested struct payloads", async () => {
+      const toWord = addressWord(userAddr);
+      const refWord = addressWord(otherAddr);
+      const amountValue = ethers.BigNumber.from(77);
+      const amountWord = uintWord(amountValue);
+
+      const directive = buildDirective([toWord, refWord, amountWord]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildNestedOps(toWord, refWord, amountWord);
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      const innerHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([INNER_TYPEHASH, refWord, amountWord])
+      );
+      const outerHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([OUTER_TYPEHASH, toWord, innerHash])
+      );
+      const expected = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, outerHash])
+      );
+
+      const encoder = ethers.utils._TypedDataEncoder.from({
+        Inner: [
+          { name: "ref", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+        Outer: [
+          { name: "to", type: "address" },
+          { name: "inner", type: "Inner" },
+        ],
+      });
+      const typedStructHash = encoder.hashStruct("Outer", {
+        to: userAddr,
+        inner: { ref: otherAddr, amount: amountValue },
+      });
+      const typedDigest = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, typedStructHash])
+      );
+
+      expect(typedStructHash).to.equal(outerHash);
+      expect(typedDigest).to.equal(expected);
+      expect(result).to.equal(typedDigest);
+    });
+
+    it("returns zero hash when nested field mismatches whitelist", async () => {
+      const toWord = addressWord(userAddr);
+      const refWord = addressWord(otherAddr);
+      const allowedAmount = uintWord(77);
+
+      const directive = buildDirective([toWord, refWord, allowedAmount]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const badOps = buildNestedOps(toWord, refWord, uintWord(99));
+      const result = await guard2.eip712Hash(DAPP_ID, badOps);
+
+      expect(result).to.equal(ethers.constants.HashZero);
+    });
+
+    it("TYPE_SELF nested field matches caller", async () => {
+      const toWord = addressWord(userAddr);
+      const amountValue = ethers.BigNumber.from(13);
+      const amountWord = uintWord(amountValue);
+      const directive = selfDirective(toWord, amountWord);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const refWord = addressWord(ownerAddr);
+      const ops = buildNestedOps(toWord, refWord, amountWord);
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      const innerHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([INNER_TYPEHASH, refWord, amountWord])
+      );
+      const outerHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([OUTER_TYPEHASH, toWord, innerHash])
+      );
+      const expected = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, outerHash])
+      );
+
+      expect(result).to.equal(expected);
+    });
+
+    it("TYPE_SELF nested field mismatch returns zero hash", async () => {
+      const toWord = addressWord(userAddr);
+      const amountWord = uintWord(55);
+      const directive = selfDirective(toWord, amountWord);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const refWord = addressWord(otherAddr);
+      const ops = buildNestedOps(toWord, refWord, amountWord);
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      expect(result).to.equal(ethers.constants.HashZero);
+    });
+
+    it("TYPE_ANY inside nested field accepts arbitrary value", async () => {
+      const toWord = addressWord(userAddr);
+      const directive: Guard2.SignDirectiveStruct = {
+        directives: [
+          (TYPE_EXACT << 5) | 0,
+          (TYPE_ANY << 5),
+          (TYPE_ANY << 5),
+        ],
+        dictionary: ethers.utils.hexConcat([toWord]),
+      };
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const refWord = addressWord(ownerAddr);
+      const amountA = uintWord(11);
+      const amountB = uintWord(22);
+
+      const opsA = buildNestedOps(toWord, refWord, amountA);
+      const opsB = buildNestedOps(toWord, refWord, amountB);
+
+      const hashA = await guard2.eip712Hash(DAPP_ID, opsA);
+      const hashB = await guard2.eip712Hash(DAPP_ID, opsB);
+
+      expect(hashA).to.not.equal(ethers.constants.HashZero);
+      expect(hashB).to.not.equal(ethers.constants.HashZero);
+      expect(hashA).to.not.equal(hashB);
+    });
+  });
+
+  describe('array fields', function () {
+    let guard2: Guard2
+    let ownerAddr: string
+    let userAddr: string
+    let otherAddr: string
+
+    const ARRAY_TYPEHASH = ethers.utils.keccak256(
+      ethers.utils.toUtf8Bytes("ArrayHolder(uint256[] nums)")
+    );
+    const ARRAY_STRUCT_TYPEHASH = ethers.utils.keccak256(
+      ethers.utils.toUtf8Bytes("ArrayOfStructs(Inner[] items)Inner(address ref,uint256 amount)")
+    );
+
+    beforeEach(async () => {
+      const { Guard2_instance } = await loadFixture(guardWithPoolFixture)
+      const [owner, user, other] = await ethers.getSigners();
+      ownerAddr = await owner.getAddress();
+      userAddr = await user.getAddress();
+      otherAddr = await other.getAddress();
+      guard2 = Guard2_instance.connect(owner);
+    });
+
+    it("returns canonical hash for uint256[] payloads", async () => {
+      const a = uintWord(1);
+      const b = uintWord(2);
+      const directive = buildDirective([a, b]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildArrayOps([a, b], ARRAY_TYPEHASH);
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      const arrayHash = ethers.utils.keccak256(ethers.utils.hexConcat([a, b]));
+      const structHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([ARRAY_TYPEHASH, arrayHash])
+      );
+      const expected = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, structHash])
+      );
+
+      expect(result).to.equal(expected);
+    });
+
+    it("returns zero hash when uint256[] element mismatches whitelist", async () => {
+      const a = uintWord(1);
+      const b = uintWord(2);
+      const directive = buildDirective([a, b]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildArrayOps([a, uintWord(3)], ARRAY_TYPEHASH);
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      expect(result).to.equal(ethers.constants.HashZero);
+    });
+
+    it("returns canonical hash for array of structs", async () => {
+      const itemA: [string, string] = [addressWord(userAddr), uintWord(10)];
+      const itemB: [string, string] = [addressWord(otherAddr), uintWord(20)];
+      const directive = buildDirective([...itemA, ...itemB]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildStructArrayOps([itemA, itemB], ARRAY_STRUCT_TYPEHASH, INNER_TYPEHASH);
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      const innerHashA = ethers.utils.keccak256(
+        ethers.utils.hexConcat([INNER_TYPEHASH, ...itemA])
+      );
+      const innerHashB = ethers.utils.keccak256(
+        ethers.utils.hexConcat([INNER_TYPEHASH, ...itemB])
+      );
+      const arrayHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([innerHashA, innerHashB])
+      );
+      const structHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([ARRAY_STRUCT_TYPEHASH, arrayHash])
+      );
+      const expected = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, structHash])
+      );
+
+      const encoder = ethers.utils._TypedDataEncoder.from({
+        Inner: [
+          { name: "ref", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+        ArrayOfStructs: [
+          { name: "items", type: "Inner[]" },
+        ],
+      });
+      const typedHash = encoder.hashStruct("ArrayOfStructs", {
+        items: [
+          { ref: userAddr, amount: 10 },
+          { ref: otherAddr, amount: 20 },
+        ],
+      });
+      const typedDigest = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, typedHash])
+      );
+
+      expect(structHash).to.equal(typedHash);
+      expect(expected).to.equal(typedDigest);
+      expect(result).to.equal(typedDigest);
+    });
+
+    it("returns zero hash when array of structs element mismatches whitelist", async () => {
+      const itemA: [string, string] = [addressWord(userAddr), uintWord(10)];
+      const itemB: [string, string] = [addressWord(otherAddr), uintWord(20)];
+      const directive = buildDirective([...itemA, ...itemB]);
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const ops = buildStructArrayOps(
+        [itemA, [addressWord(otherAddr), uintWord(99)]],
+        ARRAY_STRUCT_TYPEHASH,
+        INNER_TYPEHASH
+      );
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      expect(result).to.equal(ethers.constants.HashZero);
+    });
+  });
+
+  describe('mixed directive types', function () {
+    let guard2: Guard2
+    let ownerAddr: string
+    let userAddr: string
+    let targetAddr: string
+
+    beforeEach(async () => {
+      const { Guard2_instance } = await loadFixture(guardWithPoolFixture)
+      const [owner, user, target] = await ethers.getSigners();
+      ownerAddr = await owner.getAddress();
+      userAddr = await user.getAddress();
+      targetAddr = await target.getAddress();
+      guard2 = Guard2_instance.connect(owner);
+    });
+
+    it("supports TYPE_ANY + TYPE_SELF + TYPE_WL matching", async () => {
+      await whitelistAddressForEIP712(targetAddr, guard2);
+
+      const directive: Guard2.SignDirectiveStruct = {
+        directives: [
+          (TYPE_ANY << 5),
+          (TYPE_SELF << 5),
+          (TYPE_WL << 5),
+        ],
+        dictionary: '0x',
+      };
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const randomWord = ethers.utils.hexZeroPad("0xdeadbeef", 32);
+      const ops = buildOps(
+        [randomWord, addressWord(ownerAddr), addressWord(targetAddr)],
+        MIXED_TYPEHASH
+      );
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+
+      const structHash = ethers.utils.keccak256(
+        ethers.utils.hexConcat([
+          MIXED_TYPEHASH,
+          randomWord,
+          addressWord(ownerAddr),
+          addressWord(targetAddr),
+        ])
+      );
+      const expected = ethers.utils.keccak256(
+        ethers.utils.hexConcat(['0x1901', DOMAIN_SEPARATOR, structHash])
+      );
+
+      expect(result).to.equal(expected);
+    });
+
+    it("returns zero hash when TYPE_SELF field mismatches caller", async () => {
+      await whitelistAddressForEIP712(targetAddr, guard2);
+
+      const directive: Guard2.SignDirectiveStruct = {
+        directives: [
+          (TYPE_ANY << 5),
+          (TYPE_SELF << 5),
+          (TYPE_WL << 5),
+        ],
+        dictionary: '0x',
+      };
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const randomWord = ethers.utils.hexZeroPad("0x1234", 32);
+      const ops = buildOps(
+        [randomWord, addressWord(userAddr), addressWord(targetAddr)],
+        MIXED_TYPEHASH
+      );
+
+      const hash = await guard2.eip712Hash(DAPP_ID, ops);
+      expect(hash).to.equal(ethers.constants.HashZero);
+    });
+
+    it("returns zero hash when TYPE_WL field is not whitelisted", async () => {
+      const directive: Guard2.SignDirectiveStruct = {
+        directives: [
+          (TYPE_ANY << 5),
+          (TYPE_SELF << 5),
+          (TYPE_WL << 5),
+        ],
+        dictionary: '0x',
+      };
+      await guard2.whitelistEIP712(DAPP_ID, DOMAIN_SEPARATOR, [directive]);
+
+      const randomWord = ethers.utils.hexZeroPad("0xbeef", 32);
+      const ops = buildOps(
+        [randomWord, addressWord(ownerAddr), addressWord(userAddr)],
+        MIXED_TYPEHASH
+      );
+
+      const hash = await guard2.eip712Hash(DAPP_ID, ops);
+      expect(hash).to.equal(ethers.constants.HashZero);
+    });
+  });
+
+  describe("sample payload directives", function () {
+    let guard2: Guard2;
+
+    beforeEach(async () => {
+      const { Guard2_instance } = await loadFixture(guardWithPoolFixture);
+      const [owner] = await ethers.getSigners();
+      guard2 = Guard2_instance.connect(owner);
+    });
+
+    it("whitelists sample payload directives and matches Guard2 hash", async () => {
+      const sampleTypedData = {
+        types: {
+          Approval: [
+            { name: "owner", type: "address" },
+            { name: "spender", type: "address" },
+            { name: "value", type: "uint256" },
+          ],
+        },
+        domain: {
+          name: "UFarm",
+          version: "1",
+          chainId: 1,
+          verifyingContract: "0x1111111111111111111111111111111111111111",
+        },
+        message: {
+          owner: "0x2222222222222222222222222222222222222222",
+          spender: "0x3333333333333333333333333333333333333333",
+          value: "1000000000000000000",
+        },
+      };
+      const sampleDomain = ethers.utils._TypedDataEncoder.hashDomain(sampleTypedData.domain as any);
+
+      await whitelistAddressForEIP712(sampleTypedData.message.owner, guard2);
+      await whitelistAddressForEIP712(sampleTypedData.message.spender, guard2);
+
+      const directive: Guard2.SignDirectiveStruct = {
+        directives: [
+          (TYPE_WL << 5),
+          (TYPE_WL << 5),
+          (TYPE_ANY << 5),
+        ],
+        dictionary: ethers.utils.hexConcat([uintWord(sampleTypedData.message.value)]),
+      };
+      await guard2.whitelistEIP712(DAPP_ID, sampleDomain, [directive]);
+
+      const ops =
+        "0x00dcd29f5a41c313e954d3bb9ff244da66aa7b0c189fd3e7840560374540a65cc2019099bf5a210fca40ad25f8da4f9b4cacc7142bac2bb1f1e40181751009d2258e020000000000000000000000002222222222222222222222222222222222222222020000000000000000000000003333333333333333333333333333333333333333020000000000000000000000000000000000000000000000000de0b6b3a764000003";
+
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+      const expected = ethers.utils._TypedDataEncoder.hash(
+        sampleTypedData.domain as any,
+        sampleTypedData.types,
+        sampleTypedData.message
+      );
+
+      expect(result).to.equal(expected);
+    });
+
+    it("whitelists complex payload directives and matches Guard2 hash", async () => {
+      const typedData = {
+        types: {
+          PermitBatch: [
+            { name: "details", type: "PermitDetails[]" },
+            { name: "spender", type: "address" },
+            { name: "sigDeadline", type: "uint256" },
+          ],
+          PermitDetails: [
+            { name: "token", type: "address" },
+            { name: "amount", type: "uint160" },
+            { name: "expiration", type: "uint48" },
+            { name: "nonce", type: "uint48" },
+          ],
+        },
+        domain: {
+          name: "Permit2",
+          chainId: "42161",
+          verifyingContract: "0x000000000022d473030f116ddee9f6b43ac78ba3",
+        },
+        primaryType: "PermitBatch",
+        message: {
+          details: [
+            {
+              token: "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+              amount: "1461501637330902918203684832716283019655932542975",
+              expiration: "1767170595",
+              nonce: "0",
+            },
+            {
+              token: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+              amount: "1461501637330902918203684832716283019655932542975",
+              expiration: "1767170595",
+              nonce: "0",
+            },
+          ],
+          spender: "0xd88f38f930b7952f2db2432cb002e7abbf3dd869",
+          sigDeadline: "1764580395",
+        },
+      };
+
+      const domainHash = ethers.utils._TypedDataEncoder.hashDomain(typedData.domain as any);
+      await whitelistAddressForEIP712(typedData.message.details[0].token, guard2);
+      await whitelistAddressForEIP712(typedData.message.details[1].token, guard2);
+      await whitelistAddressForEIP712(typedData.message.spender, guard2);
+      const directive: Guard2.SignDirectiveStruct = {
+        // 10 fields: [token,amount,expiration,nonce] * 2 + spender + sigDeadline
+        directives: [
+          (TYPE_WL << 5), // details[0].token
+          (TYPE_ANY << 5), // details[0].amount
+          (TYPE_ANY << 5), // details[0].expiration
+          (TYPE_ANY << 5), // details[0].nonce
+          (TYPE_WL << 5), // details[1].token
+          (TYPE_ANY << 5), // details[1].amount
+          (TYPE_ANY << 5), // details[1].expiration
+          (TYPE_ANY << 5), // details[1].nonce
+          (TYPE_WL << 5), // spender
+          (TYPE_ANY << 5), // sigDeadline
+        ],
+        dictionary: '0x',
+      };
+      await guard2.whitelistEIP712(DAPP_ID, domainHash, [directive]);
+
+      const ops =
+        "0x008a6e6e19bdfb3db3409910416b47c2f8fc28b49488d6555c7fceaa4479135bc301af1b0d30d2cab0380e68f0689007e3254993c596f2fdd0aaa7f4d04f79440863040165626cad6cb96493bf6f5ebea28756c966f023ab9e8a83a7101849d5573b367802000000000000000000000000af88d065e77c8cc2239327c5edb3a432268e583102000000000000000000000000ffffffffffffffffffffffffffffffffffffffff02000000000000000000000000000000000000000000000000000000006954e223020000000000000000000000000000000000000000000000000000000000000000030165626cad6cb96493bf6f5ebea28756c966f023ab9e8a83a7101849d5573b367802000000000000000000000000fd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb902000000000000000000000000ffffffffffffffffffffffffffffffffffffffff02000000000000000000000000000000000000000000000000000000006954e223020000000000000000000000000000000000000000000000000000000000000000030502000000000000000000000000d88f38f930b7952f2db2432cb002e7abbf3dd8690200000000000000000000000000000000000000000000000000000000692d5c2b03";
+
+      const result = await guard2.eip712Hash(DAPP_ID, ops);
+      const expected = ethers.utils._TypedDataEncoder.hash(
+        typedData.domain as any,
+        typedData.types as any,
+        typedData.message as any
+      );
+
+      expect(result).to.equal(expected);
+    });
+  });
+});

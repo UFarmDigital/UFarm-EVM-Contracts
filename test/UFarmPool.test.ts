@@ -10,7 +10,7 @@ import {
 	impersonateAccount,
 } from '@nomicfoundation/hardhat-network-helpers'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
-import { BigNumberish, BigNumber, ContractTransaction } from 'ethers'
+import { BigNumberish, BigNumber, ContractTransaction, TypedDataDomain } from 'ethers'
 import {
 	Block__factory,
 	INonfungiblePositionManager,
@@ -2390,7 +2390,7 @@ describe('UFarmPool test', function () {
 
 			await expect(
 				UFarmPool_instance.pool.connect(bob).deposit(depositAmount, verification.clientVerification),
-			).to.be.revertedWith('Tier too low')
+			).to.be.revertedWithCustomError(UFarmPool_instance.pool, 'TierTooLow')
 		})
 
 		it('deposit is not processed when client tier is 5 and minimum tier is 10', async () => {
@@ -2410,7 +2410,7 @@ describe('UFarmPool test', function () {
 
 			await expect(
 				UFarmPool_instance.pool.connect(bob).deposit(depositAmount, verification.clientVerification),
-			).to.be.revertedWith('Tier too low')
+			).to.be.revertedWithCustomError(UFarmPool_instance.pool, 'TierTooLow')
 		})
 
 		it('deposit succeeds when minimum tier is 20 and client tier is 20', async () => {
@@ -5140,4 +5140,188 @@ describe('Pool periphery contracts tests', () => {
 		})
 	})
 
+	describe('UFarmPool -> ArbitraryController EIP-712 signing', function () {
+		const EIP_DAPP = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('UFarmPoolSigning'))
+		const REQUEST_TYPEHASH = ethers.utils.keccak256(
+			ethers.utils.toUtf8Bytes('PoolSign(address target,uint256 amount)'),
+		)
+		const TYPE_ANY = 1
+		const OPCODE_DOMAIN = '0x00'
+		const OPCODE_BEGIN = '0x01'
+		const OPCODE_FIELD = '0x02'
+		const OPCODE_END = '0x03'
+		const ERC1271_MAGICVALUE = '0x1626ba7e'
+
+		let deployer: SignerWithAddress
+		let alice: SignerWithAddress
+		let bob: SignerWithAddress
+		let initialized_pool_instance: any
+		let UFarmCore_instance: UFarmCore
+		let UFarmFund_instance: UFarmFund
+		let GuardWithSigner: any
+		let ufarmFund: string
+		let domain: TypedDataDomain
+		let domainSeparator: string
+
+		beforeEach(async function () {
+			const fixture = await loadFixture(fundWithPoolFixture)
+			deployer = fixture.deployer
+			alice = fixture.alice
+			bob = fixture.bob
+			initialized_pool_instance = fixture.initialized_pool_instance
+			UFarmCore_instance = fixture.UFarmCore_instance
+			UFarmFund_instance = fixture.UFarmFund_instance
+			ufarmFund = await initialized_pool_instance.pool.ufarmFund()
+
+			const guardDeployment = await hre.deployments.get('Guard2')
+			const guard = await ethers.getContractAt(guardDeployment.abi, guardDeployment.address)
+			GuardWithSigner = guard.connect(deployer)
+
+			const network = await ethers.provider.getNetwork()
+			domain = {
+				name: 'UFarmPoolSigningDomain',
+				version: '1',
+				chainId: network.chainId,
+				verifyingContract: initialized_pool_instance.pool.address,
+			}
+			domainSeparator = ethers.utils._TypedDataEncoder.hashDomain(domain)
+		})
+
+		const anyDirective: { directives: number[]; dictionary: string } = {
+			directives: [TYPE_ANY << 5, TYPE_ANY << 5],
+			dictionary: '0x',
+		}
+
+		function addressWord(addr: string) {
+			return ethers.utils.hexZeroPad(addr, 32)
+		}
+
+		function uintWord(value: BigNumberish) {
+			return ethers.utils.hexZeroPad(ethers.BigNumber.from(value).toHexString(), 32)
+		}
+
+		async function buildOpsAndDigest(
+			targetAddr: string,
+			amount: BigNumberish,
+			customSigner?: SignerWithAddress,
+		) {
+			const targetWord = addressWord(targetAddr)
+			const amountWord = uintWord(amount)
+			const ops = ethers.utils.hexConcat([
+				OPCODE_DOMAIN,
+				domainSeparator,
+				OPCODE_BEGIN,
+				REQUEST_TYPEHASH,
+				OPCODE_FIELD,
+				targetWord,
+				OPCODE_FIELD,
+				amountWord,
+				OPCODE_END,
+			])
+			const structHash = ethers.utils.keccak256(
+				ethers.utils.hexConcat([REQUEST_TYPEHASH, targetWord, amountWord]),
+			)
+			const digest = ethers.utils.keccak256(
+				ethers.utils.hexConcat(['0x1901', domainSeparator, structHash]),
+			)
+			const signer = customSigner ?? (initialized_pool_instance.pool.signer as SignerWithAddress)
+			const signature = await signer._signTypedData(
+				domain,
+				{
+					PoolSign: [
+						{ name: 'target', type: 'address' },
+						{ name: 'amount', type: 'uint256' },
+					],
+				},
+				{
+					target: targetAddr,
+					amount,
+				},
+			)
+			return { ops, digest, signature }
+		}
+
+		async function enableArbitraryController() {
+			await UFarmCore_instance.connect(deployer).setAllowArbitraryController(ufarmFund, true)
+			await initialized_pool_instance.pool.setUseArbitraryController(true)
+		}
+
+		async function whitelistEipDirective() {
+			await GuardWithSigner.whitelistEIP712(EIP_DAPP, domainSeparator, [anyDirective])
+		}
+
+		it('reverts signing when ArbitraryController usage is disabled', async () => {
+			const { ops } = await buildOpsAndDigest(initialized_pool_instance.pool.address, constants.ONE_HUNDRED_BUCKS)
+
+			await expect(initialized_pool_instance.pool.signMessage(EIP_DAPP, ops))
+				.to.be.revertedWithCustomError(initialized_pool_instance.pool, 'NonAuthorized')
+		})
+
+		it('stores digest and validates signature when ArbitraryController is enabled', async () => {
+			await enableArbitraryController()
+			await whitelistEipDirective()
+
+			const { ops, digest, signature } = await buildOpsAndDigest(
+				initialized_pool_instance.pool.address,
+				constants.ONE_HUNDRED_BUCKS,
+			)
+
+			await expect(initialized_pool_instance.pool.signMessage(EIP_DAPP, ops)).to.not.be.reverted
+			expect(await initialized_pool_instance.pool.signedMessages(digest)).to.be.true
+
+			const magicValue = await initialized_pool_instance.pool.callStatic.isValidSignature(digest, signature)
+			expect(magicValue).to.equal(ERC1271_MAGICVALUE)
+		})
+
+		it('reverts when caller lacks fund member permission', async () => {
+			const { ops } = await buildOpsAndDigest(initialized_pool_instance.pool.address, constants.ONE_HUNDRED_BUCKS)
+
+			await expect(initialized_pool_instance.pool.connect(bob).signMessage(EIP_DAPP, ops)).to.be.revertedWithCustomError(
+				initialized_pool_instance.pool,
+				'NonAuthorized',
+			)
+		})
+
+		it('reverts signature validation once signer permissions are revoked', async () => {
+			await enableArbitraryController()
+			await whitelistEipDirective()
+
+			const fundManagerPermissions = bitsToBigNumber([
+				constants.Fund.Permissions.Member,
+				constants.Fund.Permissions.ManagePoolFunds,
+			])
+			await UFarmFund_instance.connect(alice).updatePermissions(bob.address, fundManagerPermissions)
+
+			const { ops, digest, signature } = await buildOpsAndDigest(
+				initialized_pool_instance.pool.address,
+				constants.ONE_HUNDRED_BUCKS,
+				bob,
+			)
+			await initialized_pool_instance.pool.connect(bob).signMessage(EIP_DAPP, ops)
+
+			const magicValue = await initialized_pool_instance.pool.callStatic.isValidSignature(digest, signature)
+			expect(magicValue).to.equal(ERC1271_MAGICVALUE)
+
+			const fundMemberOnlyMask = bitsToBigNumber([constants.Fund.Permissions.Member])
+			await UFarmFund_instance.connect(alice).updatePermissions(bob.address, fundMemberOnlyMask)
+
+			await expect(initialized_pool_instance.pool.isValidSignature(digest, signature)).to.be.revertedWithCustomError(
+				initialized_pool_instance.admin,
+				'NonAuthorized',
+			)
+		})
+
+		it('returns failure code for digest that was never signed', async () => {
+			await enableArbitraryController()
+			await whitelistEipDirective()
+
+			const { digest, signature } = await buildOpsAndDigest(
+				initialized_pool_instance.pool.address,
+				constants.ONE_HUNDRED_BUCKS,
+			)
+
+			const magicValue = await initialized_pool_instance.pool.callStatic.isValidSignature(digest, signature)
+			expect(magicValue).to.equal('0xffffffff')
+		})
+	})
 })

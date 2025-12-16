@@ -233,6 +233,9 @@ const config: HardhatUserConfig = {
 				UNOSWAP_V2_CONTROLLER_COMPILER_SETTINGS,
 			'contracts/arbitrum/contracts/controllers/UniswapV2ControllerArbitrum.sol':
 				UNOSWAP_V2_CONTROLLER_COMPILER_SETTINGS,
+			'contracts/main/contracts/controllers/ArbitraryController/Guard2.sol': {
+				...UFARM_POOL_COMPILER_SETTINGS,
+			},
 			'contracts/main/contracts/pool/PoolFactory.sol': {
 				...UFARM_POOL_COMPILER_SETTINGS,
 			},

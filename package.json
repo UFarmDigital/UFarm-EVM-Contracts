@@ -1,7 +1,7 @@
 {
 	"name": "ufarm-evm-contracts",
 	"description": "UFarm EVM Smart Contracts",
-	"version": "1.6.0",
+	"version": "1.6.2",
 	"main": "index.js",
 	"devDependencies": {
 		"@chainlink/contracts": "^0.8.0",

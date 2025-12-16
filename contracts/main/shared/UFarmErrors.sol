@@ -8,9 +8,12 @@ pragma solidity ^0.8.24;
  * @notice Stores shared errors for some UFarm contracts
  */
 abstract contract UFarmErrors {
-	error ActionAlreadyDone();
-	error FETCHING_CONTROLLER_FAILED();
-	error ArraysLengthMismatch();
-	error UFarmIsPaused();
-	error NonAuthorized();
+    error ActionAlreadyDone();
+    error FETCHING_CONTROLLER_FAILED();
+    error ArraysLengthMismatch();
+    error UFarmIsPaused();
+    error NonAuthorized();
+    error CallerIsNotUFarmCore();
+    error TierTooLow();
+    error SignatureExpired();
 }

@@ -15,6 +15,8 @@ interface IGuard {
      * @return True if the protocol and method call are allowed, false otherwise.
      */
     function isProtocolAllowed(bytes32 dapp, address dappAddress, bytes calldata payload) external view returns (bool);
+
+    function eip712Hash(bytes32 dapp, bytes calldata ops) external view returns (bytes32 retHash);
 }
 
 /**
@@ -70,6 +72,15 @@ contract ArbitraryController is Controller, NZGuard, ReentrancyGuard {
         if (!success) revert ExternalCallFailed();
 
         emit Executed(dapp, payload);
+    }
+
+    function guardEIP712Hash(
+        bytes32 dapp,
+        bytes calldata message
+    ) external view checkDelegateCall returns (bytes32 retHash) {
+        if (!IUFarmPool(address(this)).useArbitraryController())
+            revert IUFarmPool.NotAllowedToUseArbController(address(this));
+        retHash = guard.eip712Hash(dapp, message);
     }
 
     /**

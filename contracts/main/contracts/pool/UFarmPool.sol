@@ -34,6 +34,10 @@ import {DataItem} from "../oracle/IV1RequestRegistry.sol";
 
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
+interface IArbitraryControllerSign {
+    function guardEIP712Hash(bytes32 dapp, bytes calldata ops) external returns (bytes32 retHash);
+}
+
 /**
  * @title UFarmPool contract
  * @author https://ufarm.digital/
@@ -63,6 +67,7 @@ contract UFarmPool is
     uint256 private constant QUEUE_LIMIT = 10;
     bytes32 private constant CLIENT_VERIFICATION_TYPEHASH =
         keccak256("ClientVerification(address investor,uint8 tier,uint128 validTill)");
+    bytes32 private constant ARBITRARY_CONTROLLER_PROTOCOL = keccak256(abi.encodePacked("ArbitraryController"));
 
     PoolStatus public status;
 
@@ -128,7 +133,7 @@ contract UFarmPool is
     }
 
     modifier onlyUFarmCore() {
-        require(msg.sender == _ufarmCore, "Caller is not UFarmCore");
+        if (msg.sender != _ufarmCore) revert CallerIsNotUFarmCore();
         _;
     }
 
@@ -153,14 +158,6 @@ contract UFarmPool is
      */
     modifier ufarmIsNotPaused() {
         _ufarmIsNotPaused();
-        _;
-    }
-
-    /**
-     * @notice Reverts if caller is not a fund member
-     */
-    modifier onlyFundMember() {
-        _isCallerFundMember();
         _;
     }
 
@@ -243,15 +240,13 @@ contract UFarmPool is
     function getExchangeRate(uint256 __totalCost) public view override returns (uint256 exchangeRate) {
         uint256 presicion = 10 ** decimals();
 
-        IPoolAdmin.PoolConfig memory config = IPoolAdmin(poolAdmin).getConfig();
-
         (
             uint256 protocolFee,
             uint256 managementFee,
             uint256 performanceFee,
             uint256 sharesToUFarm,
             uint256 sharesToFund
-        ) = _calculateFee(__totalCost, config.managementCommission, config.packedPerformanceFee);
+        ) = IPoolAdmin(poolAdmin).calculateFee(__totalCost, highWaterMark, lastAccrual, totalSupply());
 
         uint256 _totalSupply = totalSupply();
         return
@@ -322,8 +317,8 @@ contract UFarmPool is
         }
 
         if (msg.sender != ufarmFund && minClientTier > 0) {
-            require(minClientTier <= clientVerification.tier, "Tier too low");
-            require(block.timestamp <= clientVerification.validTill, "Signature expired");
+            if (minClientTier > clientVerification.tier) revert TierTooLow();
+            if (block.timestamp > clientVerification.validTill) revert SignatureExpired();
 
             bytes32 structHash = keccak256(
                 abi.encode(
@@ -333,10 +328,7 @@ contract UFarmPool is
                     clientVerification.validTill
                 )
             );
-            bytes32 diHash = ECDSARecover.toEIP712MessageHash(
-                DOMAIN_SEPARATOR(),
-                structHash
-            );
+            bytes32 diHash = ECDSARecover.toEIP712MessageHash(DOMAIN_SEPARATOR(), structHash);
             address verifier = ECDSARecover.recoverAddress(diHash, clientVerification.signature);
             UFarmPermissionsModel(_ufarmCore).checkForPermissionsMask(
                 verifier,
@@ -430,9 +422,7 @@ contract UFarmPool is
             revert InvalidWithdrawalAmount(sharesToBurn, balanceOf(investor));
     }
 
-    function approveDeposits(
-        SignedDepositRequest[] calldata _depositRequests
-    ) external ufarmIsNotPaused nonReentrant onlyFundMember {
+    function approveDeposits(SignedDepositRequest[] calldata _depositRequests) external ufarmIsNotPaused nonReentrant {
         _checkStatusForFinancing(true);
         _ensureActionDelayPassed();
 
@@ -469,14 +459,14 @@ contract UFarmPool is
 
     function approveWithdrawals(
         SignedWithdrawalRequest[] calldata _withdrawRequests
-    ) external ufarmIsNotPaused nonReentrant onlyFundMember {
+    ) external ufarmIsNotPaused nonReentrant {
         _approveWithdrawalsForToken(_withdrawRequests, valueToken);
     }
 
     function approveWithdrawalsForToken(
         SignedWithdrawalRequest[] calldata _withdrawRequests,
         address bearerToken
-    ) public ufarmIsNotPaused nonReentrant onlyFundMember {
+    ) public ufarmIsNotPaused nonReentrant {
         if (!ICoreWhitelist(_ufarmCore).isValueTokenWhitelisted(bearerToken)) revert TokenIsNotAllowed(bearerToken);
 
         _approveWithdrawalsForToken(_withdrawRequests, bearerToken);
@@ -660,10 +650,7 @@ contract UFarmPool is
      * @param _protocol - protocol name
      * @param _data - encoded function call of controller with selector and arguments
      */
-    function protocolAction(
-        bytes32 _protocol,
-        bytes calldata _data
-    ) external ufarmIsNotPaused onlyFundMember nonReentrant {
+    function protocolAction(bytes32 _protocol, bytes calldata _data) external ufarmIsNotPaused nonReentrant {
         _checkProtocolAllowance(_protocol);
         _statusBeforeOrThis(PoolStatus.Deactivating);
         IPoolAdmin(poolAdmin).isAbleToManageFunds(msg.sender);
@@ -686,7 +673,7 @@ contract UFarmPool is
     /**
      * @notice Resets the oracle request id in case of errors
      */
-    function resetOracleRequestId() external ufarmIsNotPaused onlyFundMember {
+    function resetOracleRequestId() external ufarmIsNotPaused {
         IPoolAdmin(poolAdmin).isAbleToManageFunds(msg.sender);
         requestId = 0;
     }
@@ -727,11 +714,6 @@ contract UFarmPool is
         if (fundStatus != IUFarmFund.FundStatus.Active) {
             revert IUFarmFund.WrongFundStatus(IUFarmFund.FundStatus.Active, fundStatus);
         }
-    }
-
-    function _isCallerFundMember() private view {
-        if (!UFarmPermissionsModel(address(ufarmFund)).hasPermission(msg.sender, uint8(Permissions.Fund.Member)))
-            revert UFarmErrors.NonAuthorized();
     }
 
     /**
@@ -792,10 +774,8 @@ contract UFarmPool is
     /**
      * @notice Accrues fees and mints corresponding pool shares.
      * @param totalCost The total cost value of the pool.
-     * @param managementCommission The management commission rate.
-     * @param packedPerformanceCommission The performance commission rate.
      */
-    function _accrueFee(uint256 totalCost, uint256 managementCommission, uint256 packedPerformanceCommission) private {
+    function _accrueFee(uint256 totalCost) private {
         // When pool is created, lastAccrual is 0, so we need to set it to current timestamp
         // and set HWM to totalCost
         if (lastAccrual == 0) {
@@ -810,7 +790,7 @@ contract UFarmPool is
             uint256 performanceFee,
             uint256 sharesToUFarm,
             uint256 sharesToFund
-        ) = _calculateFee(totalCost, managementCommission, packedPerformanceCommission);
+        ) = IPoolAdmin(poolAdmin).calculateFee(totalCost, highWaterMark, lastAccrual, totalSupply());
 
         if (totalCost > highWaterMark) highWaterMark = totalCost;
 
@@ -820,61 +800,6 @@ contract UFarmPool is
         if (mintedToCore || mintedToFund) lastAccrual = block.timestamp;
 
         emit FeeAccrued(protocolFee, managementFee, performanceFee, sharesToUFarm, sharesToFund);
-    }
-
-    function _calculateFee(
-        uint256 totalCost,
-        uint256 managementCommission,
-        uint256 packedPerformanceCommission
-    )
-        private
-        view
-        returns (
-            uint256 protocolFee,
-            uint256 managementFee,
-            uint256 performanceFee,
-            uint256 sharesToUFarm,
-            uint256 sharesToFund
-        )
-    {
-        uint256 accrualTime = block.timestamp - lastAccrual;
-
-        if (lastAccrual == 0 || accrualTime == 0) {
-            return (0, 0, 0, 0, 0);
-        }
-
-        {
-            uint256 protocolCommission = IUFarmCore(_ufarmCore).protocolCommission();
-            uint256 costInTime = (totalCost * accrualTime) / YEAR;
-
-            (protocolFee, managementFee) = (
-                (costInTime * protocolCommission) / ONE,
-                (costInTime * managementCommission) / ONE
-            );
-        }
-
-        if (totalCost - protocolFee - managementFee > highWaterMark) {
-            uint256 profit = totalCost - protocolFee - managementFee - highWaterMark;
-
-            performanceFee = (profit * PerformanceFeeLib.ONE_HUNDRED_PERCENT) / highWaterMark; // APY ratio
-            uint16 performanceCommission = performanceFee > PerformanceFeeLib.MAX_COMMISSION_STEP
-                ? PerformanceFeeLib.MAX_COMMISSION_STEP
-                : uint16(performanceFee); // Compare with max commission step, normalizing to MAX_COMMISSION_STEP
-
-            performanceCommission = PerformanceFeeLib._getPerformanceCommission(
-                packedPerformanceCommission,
-                performanceCommission
-            ); // Unpack commission percent for the step, where step is APY multiplier
-
-            performanceFee = (profit * performanceCommission) / PerformanceFeeLib.ONE_HUNDRED_PERCENT; // Profit * commission rate
-        }
-        uint256 totalFundFee = (4 * (performanceFee + managementFee)) / 5; // 80%
-        uint256 totalUFarmFee = totalFundFee / 4 + protocolFee; // 20% + protocol fee
-
-        uint256 _totalSupply = totalSupply();
-
-        sharesToUFarm = _sharesByQuote(totalUFarmFee, _totalSupply, totalCost);
-        sharesToFund = _sharesByQuote(totalFundFee, _totalSupply + sharesToUFarm, totalCost);
     }
 
     function _sharesByQuote(
@@ -966,8 +891,7 @@ contract UFarmPool is
 
         _totalCost = abi.decode(response.value, (uint256));
 
-        IPoolAdmin.PoolConfig memory config = IPoolAdmin(poolAdmin).getConfig();
-        _accrueFee(_totalCost, config.managementCommission, config.packedPerformanceFee);
+        _accrueFee(_totalCost);
 
         address investor;
 
@@ -1095,8 +1019,33 @@ contract UFarmPool is
         requestId = 0;
     }
 
-    function isValidSignature(bytes32, bytes memory) external pure returns (bytes4 magicValue) {
-        magicValue = 0xffffffff;
+    function isValidSignature(bytes32 hash, bytes memory signature) external view override returns (bytes4 magicValue) {
+        if (!signedMessages[hash]) {
+            return 0xffffffff;
+        }
+
+        address signer = recoverAddress(hash, signature);
+        // it reverts on lack of permissions
+        IPoolAdmin(poolAdmin).isAbleToManageFunds(signer);
+        magicValue = IERC1271.isValidSignature.selector;
+    }
+
+    function signMessage(bytes32 dapp, bytes calldata message) external ufarmIsNotPaused {
+        _statusBeforeOrThis(PoolStatus.Deactivating);
+        IPoolAdmin(poolAdmin).isAbleToManageFunds(msg.sender);
+
+        (bool success, bytes memory result) = SafeOPS._safeDelegateCall(
+            true,
+            _getProtocolController(ARBITRARY_CONTROLLER_PROTOCOL),
+            abi.encodeWithSelector(IArbitraryControllerSign.guardEIP712Hash.selector, dapp, message)
+        );
+
+        bytes32 digest = abi.decode(result, (bytes32));
+        if (digest != bytes32(0) && success) {
+            signedMessages[digest] = true;
+        } else {
+            revert UFarmErrors.NonAuthorized();
+        }
     }
 
     function setUseArbitraryController(bool value) external override {
@@ -1131,6 +1080,7 @@ contract UFarmPool is
     receive() external payable {}
 
     uint256 public actionDelayExpiration;
+    mapping(bytes32 => bool) public signedMessages;
 
-    uint256[41] private __gap;
+    uint256[40] private __gap;
 }

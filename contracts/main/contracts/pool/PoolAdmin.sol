@@ -17,6 +17,7 @@ import {UFarmOwnableUUPSBeacon} from "../../shared/UFarmOwnableUUPSBeacon.sol";
 
 /// LIBRARIES
 import {PerformanceFeeLib} from "./PerformanceFeeLib.sol";
+import {UFarmPool} from "./UFarmPool.sol";
 
 /**
  * @title PoolAdmin contract
@@ -61,14 +62,6 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
      * @notice Reverts if `_newStatus` can't be set as a new status
      */
     error WrongNewPoolStatus(IUFarmPool.PoolStatus _currentStatus, IUFarmPool.PoolStatus _newStatus);
-
-    /**
-     * @notice Reverts if caller is not a fund member
-     */
-    modifier onlyFundMember() {
-        _isCallerFundMember();
-        _;
-    }
 
     /**
      * @notice Reverts if the UFarm platform is paused
@@ -135,7 +128,7 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
         return poolConfig;
     }
 
-    function changePoolStatus(IUFarmPool.PoolStatus _newStatus) external override onlyFundMember {
+    function changePoolStatus(IUFarmPool.PoolStatus _newStatus) external override {
         _checkActiveFund();
 
         checkPoolOrFundPermission(msg.sender, Permissions.Pool.PoolStatusControl, Permissions.Fund.PoolStatusControl);
@@ -189,7 +182,7 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
      * @param _account - address of the account to update permissions
      * @param _permissions - new permissions mask
      */
-    function updatePermissions(address _account, uint256 _permissions) external ufarmIsNotPaused onlyFundMember {
+    function updatePermissions(address _account, uint256 _permissions) external ufarmIsNotPaused {
         // if user is pool member and fund member, then he can update permissions
         checkPoolOrFundPermission(
             msg.sender,
@@ -211,7 +204,6 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
     )
         external
         ufarmIsNotPaused
-        onlyFundMember
         onlyActiveFund
         onlyStatus(IUFarmPool.PoolStatus.Created)
         valueInRange(_managementCommission, 0, TEN_PERCENTS)
@@ -240,9 +232,7 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
      * @dev Reverts if the new withdrawal lockup period is the same as the old one
      * @param _withdrawalLockupPeriod - new withdrawal lockup period
      */
-    function setLockupPeriod(
-        uint128 _withdrawalLockupPeriod
-    ) external onlyFundMember onlyActiveFund onlyStatus(IUFarmPool.PoolStatus.Created) {
+    function setLockupPeriod(uint128 _withdrawalLockupPeriod) external onlyStatus(IUFarmPool.PoolStatus.Created) {
         checkPoolOrFundPermission(
             msg.sender,
             Permissions.Pool.UpdateLockupPeriods,
@@ -260,7 +250,7 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
      * @param _minInvestment - new minimum investment boundary
      * @param _maxInvestment - new maximum investment boundary
      */
-    function setInvestmentRange(uint256 _minInvestment, uint256 _maxInvestment) external onlyFundMember onlyActiveFund {
+    function setInvestmentRange(uint256 _minInvestment, uint256 _maxInvestment) external onlyActiveFund {
         IUFarmPool.PoolStatus currentState = IUFarmPool(ufarmPool).status();
         if (currentState > IUFarmPool.PoolStatus.Active) {
             revert IUFarmPool.InvalidPoolStatus(IUFarmPool.PoolStatus.Active, currentState);
@@ -325,6 +315,7 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
      */
     function isAbleToManageFunds(address manager) public view override returns (bool) {
         _checkActiveFund();
+        _isFundMember(manager);
 
         bool poolFinanceManager = _hasPermissionMask(
             manager,
@@ -351,6 +342,7 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
         Permissions.Pool _poolPermission,
         Permissions.Fund _fundPermission
     ) public view {
+        _isFundMember(_account);
         if (
             !_hasPermissionMask(
                 _account,
@@ -381,8 +373,8 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
         if (IUFarmCore(ufarmCore).isPaused()) revert UFarmErrors.UFarmIsPaused();
     }
 
-    function _isCallerFundMember() private view {
-        if (!UFarmPermissionsModel(address(ufarmFund)).hasPermission(msg.sender, uint8(Permissions.Fund.Member)))
+    function _isFundMember(address member) private view {
+        if (!UFarmPermissionsModel(address(ufarmFund)).hasPermission(member, uint8(Permissions.Fund.Member)))
             revert UFarmErrors.NonAuthorized();
     }
 
@@ -393,6 +385,68 @@ contract PoolAdmin is IPoolAdmin, UFarmPermissionsModel, UFarmOwnableUUPSBeacon,
 
     function _checkInvestmentBorders(uint256 minInvestment, uint256 maxInvestment) private pure {
         if (minInvestment > maxInvestment) revert ValueNotInRange(minInvestment, 0, maxInvestment);
+    }
+
+    function calculateFee(
+        uint256 totalCost,
+        uint256 highWaterMark,
+        uint256 lastAccrual,
+        uint256 totalSupply
+    )
+        external
+        view
+        returns (
+            uint256 protocolFee,
+            uint256 managementFee,
+            uint256 performanceFee,
+            uint256 sharesToUFarm,
+            uint256 sharesToFund
+        )
+    {
+        uint256 accrualTime = block.timestamp - lastAccrual;
+
+        if (lastAccrual == 0 || accrualTime == 0) {
+            return (0, 0, 0, 0, 0);
+        }
+
+        {
+            uint256 protocolCommission = IUFarmCore(ufarmCore).protocolCommission();
+            uint256 costInTime = (totalCost * accrualTime) / YEAR;
+
+            (protocolFee, managementFee) = (
+                (costInTime * protocolCommission) / ONE,
+                (costInTime * poolConfig.managementCommission) / ONE
+            );
+        }
+
+        if (totalCost - protocolFee - managementFee > highWaterMark) {
+            uint256 profit = totalCost - protocolFee - managementFee - highWaterMark;
+
+            performanceFee = (profit * PerformanceFeeLib.ONE_HUNDRED_PERCENT) / highWaterMark;
+            uint16 performanceCommission = performanceFee > PerformanceFeeLib.MAX_COMMISSION_STEP
+                ? PerformanceFeeLib.MAX_COMMISSION_STEP
+                : uint16(performanceFee);
+
+            performanceCommission = PerformanceFeeLib._getPerformanceCommission(
+                poolConfig.packedPerformanceFee,
+                performanceCommission
+            );
+
+            performanceFee = (profit * performanceCommission) / PerformanceFeeLib.ONE_HUNDRED_PERCENT;
+        }
+        uint256 totalFundFee = (4 * (performanceFee + managementFee)) / 5;
+        uint256 totalUFarmFee = totalFundFee / 4 + protocolFee;
+
+        sharesToUFarm = _sharesByQuote(totalUFarmFee, totalSupply, totalCost);
+        sharesToFund = _sharesByQuote(totalFundFee, totalSupply + sharesToUFarm, totalCost);
+    }
+
+    function _sharesByQuote(
+        uint256 quoteAmount,
+        uint256 totalSupply,
+        uint256 totalCost
+    ) internal pure returns (uint256 shares) {
+        shares = (totalCost > 0 && totalSupply > 0) ? ((quoteAmount * totalSupply) / totalCost) : quoteAmount;
     }
 
     uint256[50] private __gap;

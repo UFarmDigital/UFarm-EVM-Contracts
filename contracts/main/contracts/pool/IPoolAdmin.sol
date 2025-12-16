@@ -51,4 +51,32 @@ interface IPoolAdmin {
         Permissions.Pool _poolPermission,
         Permissions.Fund _fundPermission
     ) external view;
+
+    /**
+     * @notice Calculates protocol, management, and performance fees and how many shares to mint.
+     * @param totalCost Current pool NAV (includes unrealized PnL).
+     * @param highWaterMark High water mark used for performance fees.
+     * @param lastAccrual Timestamp of the last accrual event.
+     * @param totalSupply Current pool token supply (used when minting fee shares).
+     * @return protocolFee Portion of fee that belongs to the protocol.
+     * @return managementFee Portion of fee that belongs to pool/fund managers.
+     * @return performanceFee Portion of fee collected due to exceeding HWM.
+     * @return sharesToUFarm Fee shares to mint directly to UFarm.
+     * @return sharesToFund Fee shares to mint to the fund after UFarm dilution.
+     */
+    function calculateFee(
+        uint256 totalCost,
+        uint256 highWaterMark,
+        uint256 lastAccrual,
+        uint256 totalSupply
+    )
+        external
+        view
+        returns (
+            uint256 protocolFee,
+            uint256 managementFee,
+            uint256 performanceFee,
+            uint256 sharesToUFarm,
+            uint256 sharesToFund
+        );
 }

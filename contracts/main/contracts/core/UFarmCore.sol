@@ -353,7 +353,11 @@ contract UFarmCore is IUFarmCore, CoreWhitelist, UFarmPermissionsModel, Reentran
      */
     function setPostActionDelay(
         uint256 __postActionDelay
-    ) external override ownerOrHaveTwoPermissions(uint8(Permissions.UFarm.Member), uint8(Permissions.UFarm.ManageQuexFeed)) {
+    )
+        external
+        override
+        ownerOrHaveTwoPermissions(uint8(Permissions.UFarm.Member), uint8(Permissions.UFarm.ManageQuexFeed))
+    {
         if (_postActionDelay != __postActionDelay) {
             _postActionDelay = __postActionDelay;
             emit PostActionDelayChanged(__postActionDelay);
