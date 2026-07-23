@@ -1,0 +1,21 @@
+name: ufarm-contracts
+
+services:
+  contracts:
+    image: ${UFARM_CONTRACTS_IMAGE:?UFARM_CONTRACTS_IMAGE is required}:${UFARM_CONTRACTS_VERSION:?UFARM_CONTRACTS_VERSION is required}
+    pull_policy: missing
+    env_file:
+      - ${ENV_FILE:?ENV_FILE is required}
+    working_dir: /app
+    volumes:
+      - type: bind
+        source: ${DATA_DIR_PARAMS:?DATA_DIR_PARAMS is required}
+        target: /deploy
+        read_only: true
+      - type: bind
+        source: ${DATA_DIR_DEPLOYMENTS:?DATA_DIR_DEPLOYMENTS is required}
+        target: /app/ignition/deployments
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true

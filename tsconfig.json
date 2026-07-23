@@ -1,12 +1,17 @@
 {
   "compilerOptions": {
-    "target": "es2020",
-    "module": "commonjs",
+    "module": "ESNext",
+    "target": "ES2022",
+    "moduleResolution": "Bundler",
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
     "strict": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true,
+    "types": ["node", "mocha"]
   },
-  "exclude": ["node_modules","ufarm-evm-typings"]
+  "include": [
+    "./hardhat.config.ts",
+    "./ignition/**/*",
+    "./test/**/*"
+  ]
 }

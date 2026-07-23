@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "host": "pro-openapi.debank.com",
+    "path": "/v1/user/total_balance",
+    "headers": [
+      {
+        "key": "Content-Type",
+        "value": "application/json"
+      }
+    ],
+    "parameters": [],
+    "body": ""
+  },
+  "jqFilter": ".total_usd_value * 1000000 | floor",
+  "responseSchema": "uint256",
+  "patch": {
+    "pathSuffix": "",
+    "headers": [
+      {
+        "key": "AccessKey",
+        "value": "<secret-key>"
+      }
+    ],
+    "parameters": [],
+    "body": ""
+  }
+}

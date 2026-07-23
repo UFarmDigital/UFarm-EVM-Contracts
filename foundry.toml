@@ -1,0 +1,30 @@
+[profile.default]
+src = "contracts"
+test = "foundry"
+out = "out-foundry"
+libs = ["node_modules"]
+solc_version = "0.8.35"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+verbosity = 2
+ignored_error_codes = [
+  "license",
+  "code-size",
+  "init-code-size",
+  "transient-storage",
+  "transfer-deprecated",
+  "natspec-memory-safe-assembly-deprecated",
+  5667,
+  6335,
+]
+
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/"
+]
+
+[invariant]
+runs = 64
+depth = 32
+fail_on_revert = false

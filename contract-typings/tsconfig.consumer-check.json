@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@ufarm/evm-v2-types": ["./package"]
+    }
+  },
+  "files": ["./consumer-check.ts"]
+}

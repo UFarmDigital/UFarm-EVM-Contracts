@@ -1,26 +1,17 @@
-# MacOS files
-.DS_Store
-data-*
-
-# Node files
-node_modules
-.env
-coverage
+node_modules/
+artifacts/
+cache/
+coverage/
 coverage.json
-typechain
-typechain-types
-
-# Hardhat files
-cache
-artifacts
-docs
-deployments/localhost
-deployments
-deployments*.json
-.openzeppelin
-**/solcInputs/
-contracts/hardhat-dependency-compiler
-
-# Other
-out*.txt
-mounts/
+typechain-types/
+types/
+contract-typings/package/
+ignition/deployments/
+out-foundry/
+setup/
+.env
+.env.*
+!.env.example
+.worktree/
+.worktrees/
+.DS_Store

@@ -1,51 +1,106 @@
-image: docker:24.0.7
-
-services:
-  - docker:24.0.7-dind
+image: node:24.16-alpine
 
 stages:
-  - test
   - build
-  - deploy
+  - test
+  - docker
+  - publish
 
-variables:
-  DOCKER_TLS_CERTDIR: ""
-  DOCKER_HOST: tcp://docker:2375
-  DOCKER_CERT_PATH: "/certs/client"
+cache:
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - .npm/
 
-.build: &build
+compile_contracts:
+  stage: build
   script:
-    - git submodule update --init --recursive
-    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
-    - docker build -f .docker/Dockerfile -t $CI_REGISTRY_IMAGE:${CI_COMMIT_SHORT_SHA} -t $CI_REGISTRY_IMAGE:${ENV_TAG} .
-    - docker push --all-tags $CI_REGISTRY_IMAGE
+    - npm ci --cache .npm --prefer-offline
+    - npm run compile
+    - npm run build:contract-typings
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - artifacts/
+      - contract-typings/package/
 
-before_script:
-  - apk add git openssh-client
-  - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-  - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
-  - cp $SSH_PRIVATE_KEY ~/.ssh/id_ecdsa && chmod 0600 ~/.ssh/id_ecdsa
+test_contracts:
+  stage: test
+  image: node:24.16-bookworm-slim
+  needs:
+    - job: compile_contracts
+      artifacts: true
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends bash build-essential ca-certificates curl git python3 python3-pip python3-venv
+    - rm -rf /var/lib/apt/lists/*
+    - npm ci --cache .npm --prefer-offline
+    - curl -L https://foundry.paradigm.xyz | SHELL=/bin/bash bash
+    - export PATH="${HOME}/.foundry/bin:${PATH}"
+    - foundryup
+    - ln -sf "${HOME}/.foundry/bin/forge" /usr/local/bin/forge
+    - ln -sf "${HOME}/.foundry/bin/cast" /usr/local/bin/cast
+    - ln -sf "${HOME}/.foundry/bin/anvil" /usr/local/bin/anvil
+    - forge --version
+    - python3 -m venv .venv
+    - . .venv/bin/activate
+    - pip install --upgrade pip
+    - pip install slither-analyzer
+    - ln -sf "${PWD}/.venv/bin/slither" /usr/local/bin/slither
+    - slither --version
+  script:
+    - export PATH="${HOME}/.foundry/bin:${PATH}"
+    - . .venv/bin/activate
+    - npm run format:check
+    - npm run test
+    - npm run security
 
-build-dev:
-  stage: build
+build_contracts_image:
+  stage: docker
+  image: docker:27-cli
+  services:
+    - docker:27-dind
+  needs:
+    - job: compile_contracts
+      artifacts: true
+    - job: test_contracts
+      artifacts: false
   variables:
-    ENV_TAG: latest
-  <<: *build
-  only:
-    - develop
-
-build-demo:
-  stage: build
-  variables:
-    ENV_TAG: stable
-  <<: *build
-  only:
-    - master
-
-build-prod:
-  stage: build
-  variables:
-    ENV_TAG: $CI_COMMIT_TAG
-  <<: *build
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_BUILDKIT: "1"
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - PACKAGE_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n 1)
+    - IMAGE_TAG="${CI_REGISTRY_IMAGE}:${PACKAGE_VERSION}"
+    - LATEST_TAG="${CI_REGISTRY_IMAGE}:latest"
+    - echo "${CI_REGISTRY_PASSWORD}" | docker login "${CI_REGISTRY}" -u "${CI_REGISTRY_USER}" --password-stdin
+    - docker context create gitlab-dind --docker "host=${DOCKER_HOST},ca=${DOCKER_CERT_PATH}/ca.pem,cert=${DOCKER_CERT_PATH}/cert.pem,key=${DOCKER_CERT_PATH}/key.pem"
+    - docker buildx create gitlab-dind --use
+    - docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t "${IMAGE_TAG}" -t "${LATEST_TAG}" --push .
+
+publish_contract_typings:
+  stage: publish
+  needs:
+    - job: compile_contracts
+      artifacts: true
+    - job: test_contracts
+      artifacts: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - PACKAGE_NAME=$(node -p "require('./contract-typings/package/package.json').name")
+    - PACKAGE_VERSION=$(node -p "require('./contract-typings/package/package.json').version")
+    - REGISTRY="https://${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/"
+    - echo "@ufarm:registry=${REGISTRY}" > .npmrc
+    - echo "//${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}" >> .npmrc
+    - |
+      if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" --registry "${REGISTRY}" >/dev/null 2>&1; then
+        echo "${PACKAGE_NAME}@${PACKAGE_VERSION} already exists in GitLab Package Registry. Skipping publish."
+        exit 0
+      fi
+    - npm publish ./contract-typings/package --registry "${REGISTRY}"

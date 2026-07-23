@@ -1,15 +1,13 @@
-# system
 .git
-docker-compose*
-
-# nodejs
-.env*
-npm-debug.log
-node_modules
-
-# artifacts
-docs
-cache
-artifacts
-deployments
-typechain-types
+.git/
+.worktree/
+.worktrees/
+.env
+.env.*
+.DS_Store
+node_modules/
+out-foundry/
+setup/
+coverage/
+coverage.json
+contract-typings/package/
