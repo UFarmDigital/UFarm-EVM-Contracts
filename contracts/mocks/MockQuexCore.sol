@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.35;
 
-import {DataItem, Flow, IFlowRegistry, IQuexActionRegistry} from "../interfaces/quex/IQuex.sol";
+import {DataItem, Flow, IdType, IFlowRegistry, IQuexActionRegistry} from "../interfaces/quex/IQuex.sol";
 
 interface IQuexCallbackReceiver {
-    function quexCallback(uint256 requestId, DataItem calldata response) external;
+    function quexCallback(uint256 requestId, DataItem calldata response, IdType idType) external;
 }
 
 contract MockQuexCore is IFlowRegistry, IQuexActionRegistry {
@@ -50,6 +50,23 @@ contract MockQuexCore is IFlowRegistry, IQuexActionRegistry {
     }
 
     function submitResponse(address receiver, uint256 requestId, DataItem calldata response) external {
-        IQuexCallbackReceiver(receiver).quexCallback(requestId, response);
+        IQuexCallbackReceiver(receiver).quexCallback(requestId, response, IdType.RequestId);
+    }
+
+    function submitResponseWithIdType(
+        address receiver,
+        uint256 flowId,
+        uint256 id,
+        DataItem calldata response,
+        IdType idType
+    ) external {
+        (bool success, bytes memory returnData) = receiver.call(
+            abi.encodeWithSelector(_flows[flowId].callback, id, response, idType)
+        );
+        if (!success) {
+            assembly ("memory-safe") {
+                revert(add(returnData, 0x20), mload(returnData))
+            }
+        }
     }
 }

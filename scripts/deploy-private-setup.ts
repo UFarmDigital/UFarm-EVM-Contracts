@@ -166,6 +166,7 @@ async function main(): Promise<void> {
   const parameters = withFoundationParameters(parameterResolution?.parameters, {
     createX: createXAddress,
     quexCore: quexCoreAddress,
+    quexBatchOraclePool: quexRequestOraclePoolAddress,
     salt,
   });
 

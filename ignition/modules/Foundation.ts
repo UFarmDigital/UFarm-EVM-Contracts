@@ -11,6 +11,8 @@ const FoundationModule = buildModule("Foundation", (m) => {
   const accountingChainId = m.getParameter("accountingChainId", 1n);
   const quexCore = m.getParameter("quexCore", "0x97076a3c0A414E779f7BEC2Bd196D4FdaADFDB96");
   const quexSubscriptionId = m.getParameter("quexSubscriptionId");
+  const quexBatchOraclePool = m.getParameter("quexBatchOraclePool");
+  const quexBatchGasLimit = m.getParameter("quexBatchGasLimit", 1_000_000n);
 
   const createX = m.contractAt("ICreateX", createXAddress, { id: "CreateX" });
   const create3Helper = m.contract("FoundationCreate3Helper", [], { id: "FoundationCreate3Helper" });
@@ -52,13 +54,9 @@ const FoundationModule = buildModule("Foundation", (m) => {
     id: "VaultLifecycleModule",
     after: [adminConfigModule],
   });
-  const escrowImplementation = m.contract("UFarmEscrow", [], {
-    id: "UFarmEscrowImpl",
-    after: [lifecycleModule],
-  });
   const quexOracleImplementation = m.contract("UFarmQuexOracle", [], {
     id: "UFarmQuexOracleImpl",
-    after: [escrowImplementation],
+    after: [lifecycleModule],
   });
   const quexOracleInitData = m.encodeFunctionCall(quexOracleImplementation, "initialize", [
     core,
@@ -71,10 +69,38 @@ const FoundationModule = buildModule("Foundation", (m) => {
   });
   const quexOracle = m.contractAt("UFarmQuexOracle", quexOracleProxy, { id: "UFarmQuexOracle" });
 
+  const quexBatchOracleImplementation = m.contract("UFarmQuexBatchOracle", [], {
+    id: "UFarmQuexBatchOracleImpl",
+    after: [quexOracleProxy],
+  });
+  const quexBatchOracleInitData = m.encodeFunctionCall(quexBatchOracleImplementation, "initialize", [
+    core,
+    quexCore,
+    quexSubscriptionId,
+    quexBatchOraclePool,
+    quexBatchGasLimit,
+  ]);
+  const quexBatchOracleProxy = m.contract(
+    "ERC1967Proxy",
+    [quexBatchOracleImplementation, quexBatchOracleInitData],
+    {
+      id: "UFarmQuexBatchOracleProxy",
+      after: [quexBatchOracleImplementation],
+    },
+  );
+  const quexBatchOracle = m.contractAt("UFarmQuexBatchOracle", quexBatchOracleProxy, {
+    id: "UFarmQuexBatchOracle",
+  });
+
+  const escrowImplementation = m.contract("UFarmEscrow", [], {
+    id: "UFarmEscrowImpl",
+    after: [quexBatchOracleProxy],
+  });
+
   const escrowInitData = m.encodeFunctionCall(escrowImplementation, "initialize", [core]);
   const escrowProxy = m.contract("ERC1967Proxy", [escrowImplementation, escrowInitData], {
     id: "UFarmEscrowProxy",
-    after: [quexOracleProxy],
+    after: [escrowImplementation],
   });
   const escrow = m.contractAt("UFarmEscrow", escrowProxy, { id: "UFarmEscrow" });
 
@@ -112,6 +138,7 @@ const FoundationModule = buildModule("Foundation", (m) => {
     core,
     escrow,
     quexOracle,
+    quexBatchOracle,
     curatorBeacon,
     vaultBeacon,
   };

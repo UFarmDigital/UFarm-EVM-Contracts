@@ -12,6 +12,7 @@ import {
   type UpgradeTarget,
   normalizedBytecodeHash,
   parseUpgradeTargets,
+  validateBatchOracleProxy,
 } from "./helpers/upgrade-helpers.js";
 
 const IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
@@ -38,6 +39,7 @@ type UpgradeSpec = {
 const coreAddress = requiredAddressArgument("--core");
 const include = parseUpgradeTargets(argumentValue("--include"));
 const guardOverride = optionalAddressArgumentValue("--guard");
+const batchOracleOverride = optionalAddressArgumentValue("--batch-oracle");
 const dryRun = process.argv.includes("--dry-run");
 
 const connection = await connectWithRole("PK_UFARM_OWNER");
@@ -51,10 +53,15 @@ if (dryRun) console.log("dry run: no deployments or upgrade calls will be sent")
 const context: UpgradeContext = { ethers, core, coreAddress, dryRun };
 
 for (const target of include) {
-  await upgradeTarget(context, target, guardOverride);
+  await upgradeTarget(context, target, guardOverride, batchOracleOverride);
 }
 
-async function upgradeTarget(context: UpgradeContext, target: UpgradeTarget, guardAddress?: string): Promise<void> {
+async function upgradeTarget(
+  context: UpgradeContext,
+  target: UpgradeTarget,
+  guardAddress?: string,
+  batchOracleAddress?: string,
+): Promise<void> {
   if (target === "core") {
     await upgradeUUPS(context, {
       label: "core",
@@ -92,6 +99,23 @@ async function upgradeTarget(context: UpgradeContext, target: UpgradeTarget, gua
       apply: async (newImplementation) => {
         const oracleProxy = await context.ethers.getContractAt("UFarmQuexOracle", oracle);
         await waitAndLog(await oracleProxy.upgradeToAndCall(newImplementation, "0x"));
+      },
+    });
+    return;
+  }
+
+  if (target === "batch-oracle") {
+    if (batchOracleAddress === undefined) {
+      throw new Error("--batch-oracle is required when upgrading the batch oracle");
+    }
+    const proxy = await context.ethers.getContractAt("UFarmQuexBatchOracle", batchOracleAddress);
+    await validateBatchOracleProxy(proxy, context.coreAddress, batchOracleAddress);
+    await upgradeUUPS(context, {
+      label: "quex batch oracle",
+      contractName: "UFarmQuexBatchOracle",
+      currentAddress: await implementationOf(context, batchOracleAddress),
+      apply: async (newImplementation) => {
+        await waitAndLog(await proxy.upgradeToAndCall(newImplementation, "0x"));
       },
     });
     return;

@@ -16,13 +16,19 @@ import {
     DataItem,
     Flow,
     HTTPRequest,
+    IdType,
     IRequestOraclePool,
     IFlowRegistry,
     IQuexActionRegistry,
     QueryParameter,
     RequestHeader
 } from "../interfaces/quex/IQuex.sol";
-import {QuexActionDataUpdated, QuexFlowCreated, QuexRequestCreated} from "./UFarmQuexOracleEvents.sol";
+import {
+    QuexActionDataUpdated,
+    QuexFlowCacheInvalidated,
+    QuexFlowCreated,
+    QuexRequestCreated
+} from "./UFarmQuexOracleEvents.sol";
 import {
     InvalidAddress,
     InvalidConfig,
@@ -89,7 +95,7 @@ contract UFarmQuexOracle is Initializable, UUPSUpgradeable, IUFarmOracle, Reentr
      * @param subscriptionId_ Quex subscription used to pay for requests.
      */
     function initialize(address core_, address quexCore_, uint256 subscriptionId_) external initializer {
-        if (core_ == address(0) || quexCore_ == address(0) || subscriptionId_ == 0) revert InvalidAddress();
+        if (core_ == address(0) || quexCore_ == address(0)) revert InvalidAddress();
         core = core_;
         quexCore = quexCore_;
         subscriptionId = subscriptionId_;
@@ -103,11 +109,15 @@ contract UFarmQuexOracle is Initializable, UUPSUpgradeable, IUFarmOracle, Reentr
 
     /**
      * @notice Updates the Quex subscription used for future NAV requests.
-     * @param newSubscriptionId New non-zero Quex subscription id.
+     * @param newSubscriptionId New Quex subscription id.
      */
     function setQuexSubscriptionId(uint256 newSubscriptionId) external onlyOracleManager {
-        if (newSubscriptionId == 0) revert InvalidConfig();
         subscriptionId = newSubscriptionId;
+    }
+
+    function invalidateFlowCache() external onlyOracleManager {
+        flowVersion += 1;
+        emit QuexFlowCacheInvalidated(flowVersion);
     }
 
     /**
@@ -287,9 +297,11 @@ contract UFarmQuexOracle is Initializable, UUPSUpgradeable, IUFarmOracle, Reentr
      *      an authorized operator resolves it through timeout-based resetRequests or manualResendOracleRequest.
      * @param requestId Quex request id that is being fulfilled.
      * @param response Quex response data containing the NAV value and valuation timestamp.
+     * @param idType Quex identifier type. Only request identifiers are accepted.
      */
-    function quexCallback(uint256 requestId, DataItem calldata response) external virtual nonReentrant {
+    function quexCallback(uint256 requestId, DataItem calldata response, IdType idType) external virtual nonReentrant {
         if (msg.sender != quexCore) revert Unauthorized(msg.sender);
+        if (idType != IdType.RequestId) revert OracleFlowError(ErrorCodes.ORACLE_INVALID_REQUEST);
 
         address vault = _vaultByRequestId[requestId];
         if (vault == address(0)) revert OracleFlowError(ErrorCodes.ORACLE_INVALID_REQUEST);

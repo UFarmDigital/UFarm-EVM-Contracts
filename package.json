@@ -1,6 +1,6 @@
 {
   "name": "ufarm-evm-contracts-v2",
-  "version": "2.0.7",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "security:slither": "slither . --config-file slither.config.json",
     "security": "npm run security:foundry && npm run security:slither",
     "deploy:foundation": "node --import tsx scripts/deploy-foundation.ts",
+    "deploy:quex-batch-oracle": "node --import tsx scripts/deploy-quex-batch-oracle.ts",
     "deploy:private-setup": "node --import tsx scripts/deploy-private-setup.ts",
     "upgrade:foundation": "node --import tsx scripts/upgrade-foundation.ts",
     "verify": "hardhat --network ufarm verify",
@@ -31,6 +32,7 @@
     "exec:guard:whitelist": "node --import tsx scripts/exec-guard-whitelist.ts",
     "exec:guard:whitelist-eip712": "node --import tsx scripts/exec-guard-whitelist-eip712.ts",
     "exec:oracle:configure-quex": "node --import tsx scripts/exec-oracle-configure-quex.ts",
+    "exec:oracle:configure-quex-batch": "node --import tsx scripts/exec-oracle-configure-quex-batch.ts",
     "exec:quex:submit-response": "node --import tsx scripts/exec-quex-submit-response.ts",
     "exec:core:create-curator": "node --import tsx scripts/exec-core-create-curator.ts",
     "exec:curator:create-vault": "node --import tsx scripts/exec-curator-create-vault.ts",
@@ -51,11 +53,23 @@
     "@types/node": "25.6.1",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
-    "hardhat": "3.8.0",
+    "hardhat": "3.15.0",
     "rollup": "^4.62.2",
     "rollup-plugin-dts": "^6.4.1",
     "solc": "0.8.35",
     "tsup": "^8.5.1",
     "typescript": "6.0.3"
+  },
+  "overrides": {
+    "mocha": {
+      "diff": "8.0.3",
+      "serialize-javascript": "7.0.5"
+    },
+    "solc": {
+      "tmp": "0.2.7"
+    },
+    "tsup": {
+      "esbuild": "0.28.2"
+    }
   }
 }

@@ -252,7 +252,10 @@ contract VaultLifecycleModule is
             revert IUFarmVaultErrors.OracleFlowError(ErrorCodes.ORACLE_INVALID_REQUEST);
         }
         if (msg.sender != activeRequest.oracle) revert IUFarmVaultErrors.Unauthorized(msg.sender);
-        if (IUFarmCore(VaultBaseStorage.data().core).navRequestCooldown() + valuationTimestamp < block.timestamp) {
+        if (
+            valuationTimestamp < activeRequest.requestedAt
+                || IUFarmCore(VaultBaseStorage.data().core).navRequestCooldown() + valuationTimestamp < block.timestamp
+        ) {
             revert IUFarmVaultErrors.OracleFlowError(ErrorCodes.ORACLE_INVALID_VALUATION_TIMESTAMP);
         }
 
@@ -817,8 +820,8 @@ contract VaultLifecycleModule is
                 accrual.performanceFeeShares
             );
         }
-        if (accrual.grossSharePrice > lifecycle.highWaterMark) {
-            lifecycle.highWaterMark = accrual.grossSharePrice;
+        if (lifecycle.lastTokenPrice > lifecycle.highWaterMark) {
+            lifecycle.highWaterMark = lifecycle.lastTokenPrice;
         }
     }
 

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { getAddress, id, isAddress, isHexString, parseUnits } from "ethers";
+import { configVariable } from "hardhat/config";
 
 type ExecConnection = Awaited<ReturnType<typeof import("hardhat").network.create>> & {
   // The ethers plugin augments Hardhat network connections at runtime, but its
@@ -82,15 +83,15 @@ export async function connectReadOnly(): Promise<ExecConnection> {
 }
 
 export async function connectWithRole(role: RolePrivateKey): Promise<ExecConnection> {
-  const privateKey = process.env[role];
-  if (privateKey === undefined || privateKey.length === 0) {
-    throw new Error(`${role} is required in the environment or .env`);
-  }
-
-  process.env.UFARM_PRIVATE_KEY = privateKey;
-
   const { network } = await import("hardhat");
-  return network.create("ufarm") as Promise<ExecConnection>;
+  return network.create({
+    network: "ufarm",
+    override: { accounts: [resolveRoleAccount(role)] },
+  }) as Promise<ExecConnection>;
+}
+
+export function resolveRoleAccount(role: RolePrivateKey) {
+  return process.env[role] || configVariable(role);
 }
 
 export async function waitAndLog(tx: { hash: string; wait: () => Promise<{ status?: number | null }> }): Promise<void> {

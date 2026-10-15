@@ -4,7 +4,16 @@
     "salt": "0x1111111111111111111111111111111111111111002222222222222222222222",
     "accountingChainId": 1,
     "quexCore": "0x97076a3c0A414E779f7BEC2Bd196D4FdaADFDB96",
-    "quexSubscriptionId": 1
+    "quexSubscriptionId": 1,
+    "quexBatchOraclePool": "0x40b30Ba47eAB6736D242f15A7Afc9698F0Ff176f",
+    "quexBatchGasLimit": 1000000
+  },
+  "QuexBatchOracle": {
+    "core": "0x3333333333333333333333333333333333333333",
+    "quexCore": "0x97076a3c0A414E779f7BEC2Bd196D4FdaADFDB96",
+    "subscriptionId": 0,
+    "requestOraclePool": "0x40b30Ba47eAB6736D242f15A7Afc9698F0Ff176f",
+    "gasLimit": 1000000
   },
   "FoundationCoreConfig": {
     "core": "0x3333333333333333333333333333333333333333",

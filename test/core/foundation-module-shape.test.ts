@@ -40,6 +40,7 @@ describe("Foundation Ignition module", function () {
       "core",
       "escrow",
       "quexOracle",
+      "quexBatchOracle",
       "curatorBeacon",
       "vaultBeacon",
     ]);
@@ -55,6 +56,9 @@ describe("Foundation Ignition module", function () {
       "Foundation#UFarmQuexOracleImpl",
       "Foundation#UFarmQuexOracleProxy",
       "Foundation#UFarmQuexOracle",
+      "Foundation#UFarmQuexBatchOracleImpl",
+      "Foundation#UFarmQuexBatchOracleProxy",
+      "Foundation#UFarmQuexBatchOracle",
       "Foundation#UFarmCuratorBeacon",
       "Foundation#UFarmVaultBeacon",
     ]);
@@ -78,12 +82,15 @@ describe("Foundation Ignition module", function () {
     expect(source).to.include('m.contract("UFarmVault"');
     expect(source).to.include('m.contract("UFarmEscrow"');
     expect(source).to.include('m.contract("UFarmQuexOracle"');
+    expect(source).to.include('m.contract("UFarmQuexBatchOracle"');
     expect(source).to.include('m.contract("UFarmCore", [], { id: "UFarmCoreImpl", after: [create3Helper] })');
     expect(source).to.include("after: [deployCoreProxy]");
     expect(source).to.include('m.contractAt("UFarmQuexOracle"');
     expect(source).to.include("0x97076a3c0A414E779f7BEC2Bd196D4FdaADFDB96");
     expect(source).to.include('m.getParameter("quexSubscriptionId")');
     expect(source).to.not.include('m.getParameter("quexSubscriptionId", 1n)');
+    expect(source).to.include('m.getParameter("quexBatchOraclePool")');
+    expect(source).to.include('m.getParameter("quexBatchGasLimit", 1_000_000n)');
     expect(source).to.include('m.contract("ERC1967Proxy"');
     expect(source).to.not.include('"EscrowBeacon"');
     expect(source).to.include('"initialize"');
@@ -110,6 +117,8 @@ describe("Foundation Ignition module", function () {
       "Foundation#UFarmEscrowImpl",
       "Foundation#UFarmQuexOracleImpl",
       "Foundation#UFarmQuexOracleProxy",
+      "Foundation#UFarmQuexBatchOracleImpl",
+      "Foundation#UFarmQuexBatchOracleProxy",
       "Foundation#UFarmEscrowProxy",
       "Foundation#UFarmCuratorBeacon",
       "Foundation#UFarmVaultBeacon",
@@ -128,10 +137,12 @@ describe("Foundation Ignition module", function () {
       ["Foundation#VaultAdapterGatewayModule", "Foundation#UFarmVaultImpl"],
       ["Foundation#VaultAdminConfigModule", "Foundation#VaultAdapterGatewayModule"],
       ["Foundation#VaultLifecycleModule", "Foundation#VaultAdminConfigModule"],
-      ["Foundation#UFarmEscrowImpl", "Foundation#VaultLifecycleModule"],
-      ["Foundation#UFarmQuexOracleImpl", "Foundation#UFarmEscrowImpl"],
+      ["Foundation#UFarmQuexOracleImpl", "Foundation#VaultLifecycleModule"],
       ["Foundation#UFarmQuexOracleProxy", "Foundation#UFarmQuexOracleImpl"],
-      ["Foundation#UFarmEscrowProxy", "Foundation#UFarmQuexOracleProxy"],
+      ["Foundation#UFarmQuexBatchOracleImpl", "Foundation#UFarmQuexOracleProxy"],
+      ["Foundation#UFarmQuexBatchOracleProxy", "Foundation#UFarmQuexBatchOracleImpl"],
+      ["Foundation#UFarmEscrowImpl", "Foundation#UFarmQuexBatchOracleProxy"],
+      ["Foundation#UFarmEscrowProxy", "Foundation#UFarmEscrowImpl"],
       ["Foundation#UFarmCuratorBeacon", "Foundation#UFarmEscrowProxy"],
       ["Foundation#UFarmVaultBeacon", "Foundation#UFarmCuratorBeacon"],
       ["Foundation#InitializeFactory", "Foundation#UFarmVaultBeacon"],

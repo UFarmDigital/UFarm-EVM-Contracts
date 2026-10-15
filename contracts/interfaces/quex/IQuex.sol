@@ -11,6 +11,11 @@ enum RequestMethod {
     Trace
 }
 
+enum IdType {
+    RequestId,
+    FlowId
+}
+
 struct RequestHeader {
     string key;
     string value;

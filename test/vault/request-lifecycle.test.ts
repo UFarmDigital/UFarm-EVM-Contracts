@@ -1735,6 +1735,20 @@ describe("UFarmVault request lifecycle", function () {
     expect(await vault.totalSupply()).to.equal(1_120n);
   });
 
+  it("charges performance fee for gains above the post-fee high-water mark", async function () {
+    const fixture = await deployFixture();
+    const { vault, owner, vaultOwner, assetManager } = fixture;
+
+    await vault.connect(vaultOwner).setFees(0n, packPerformanceFeeSchedule([[2_000n, MAX_PERFORMANCE_THRESHOLD_BPS]]));
+    await seedShares(fixture, owner, 1_000n);
+
+    await settleWithOracle(vault, assetManager, 1_200n);
+
+    await expect(settleWithOracle(vault, assetManager, 1_230n))
+      .to.emit(vault, "FeesAccrued")
+      .withArgs(0n, 4n, 0n, 0n, 4n);
+  });
+
   it("accrues ladder performance fee across configured profit brackets", async function () {
     const fixture = await deployFixture();
     const { core, curator, vault, owner, vaultOwner, assetManager } = fixture;
@@ -2704,6 +2718,26 @@ describe("UFarmVault request lifecycle", function () {
       0n,
     ]);
     expect(await vault.settlementAllowedAt()).to.not.equal(0n);
+  });
+
+  it("rejects NAV valuations older than the active oracle request", async function () {
+    const { core, vault, oracle, owner, assetManager } = await deployFixture();
+    await core.setVaultOracle(await vault.getAddress(), await oracle.getAddress());
+    await core.setNavRequestCooldown(60n);
+    await vault.connect(owner).requestDeposit(100n, owner.address, owner.address);
+    const requestTx = await vault.connect(assetManager).getFunction("settleRequests()")();
+    const requestReceipt = await requestTx.wait();
+    const requestBlock = await ethers.provider.getBlock(requestReceipt!.blockNumber);
+    const requestedAt = BigInt(requestBlock!.timestamp);
+
+    await expect(oracle.submitNav(1n, 100n, requestedAt - 1n))
+      .to.be.revertedWithCustomError(vault, "OracleFlowError")
+      .withArgs(OracleFlow.InvalidValuationTime);
+    expect(await vault.activeOracleRequestId()).to.equal(1n);
+    expect(await vault.pendingDepositRequest(0n, owner.address)).to.equal(100n);
+
+    await expect(oracle.submitNav(1n, 100n, requestedAt)).to.emit(vault, "OracleNAVReceived");
+    expect(await vault.activeOracleRequestId()).to.equal(0n);
   });
 
   it("rejects oracle callback from wrong caller wrong id zero timestamp and callback pause", async function () {

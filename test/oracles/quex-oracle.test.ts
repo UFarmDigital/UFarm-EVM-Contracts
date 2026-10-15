@@ -21,7 +21,7 @@ const OracleFlow = {
   InvalidValuationTime: 7n,
 };
 
-async function deployFixture() {
+async function deployFixture(subscriptionId = 77n) {
   const [authority, registrar, outsider, curatorOwner, vaultOwner, assetManager] = await ethers.getSigners();
 
   const { core } = await deployConfiguredCore(ethers, authority);
@@ -35,7 +35,7 @@ async function deployFixture() {
   const oracleInitData = oracleImpl.interface.encodeFunctionData("initialize", [
     await core.getAddress(),
     await quexCore.getAddress(),
-    77n,
+    subscriptionId,
   ]);
   const oracleProxy = await ethers.deployContract("ERC1967Proxy", [await oracleImpl.getAddress(), oracleInitData]);
   const oracle = await ethers.getContractAt("UFarmQuexOracle", await oracleProxy.getAddress());
@@ -176,6 +176,39 @@ describe("UFarmQuexOracle", function () {
     expect(await oracle.flowVersion()).to.equal(1n);
   });
 
+  it("allows deployment with a zero subscription and blocks requests until configured", async function () {
+    const { oracle, vault, assetManager, registrar, configure, startVaultRequest } = await deployFixture(0n);
+    await configure();
+
+    await expect(startVaultRequest()).to.be.revertedWithCustomError(oracle, "InvalidConfig");
+
+    await oracle.connect(registrar).setQuexSubscriptionId(77n);
+    await expect(vault.connect(assetManager).getFunction("settleRequests()")()).to.emit(oracle, "QuexRequestCreated");
+  });
+
+  it("allows setting subscription to zero without invalidating cached flows", async function () {
+    const { oracle, registrar, vault, assetManager, configure } = await deployFixture();
+    await configure();
+    await vault.connect(assetManager).getFunction("settleRequests()")();
+    const cached = await oracle.vaultFlow(await vault.getAddress());
+
+    await oracle.connect(registrar).setQuexSubscriptionId(0n);
+
+    expect((await oracle.vaultFlow(await vault.getAddress())).flowId).to.equal(cached.flowId);
+  });
+
+  it("invalidates every legacy flow cache by incrementing the global version", async function () {
+    const { oracle, registrar, vault, assetManager, configure } = await deployFixture();
+    await configure();
+    await vault.connect(assetManager).getFunction("settleRequests()")();
+    const previousVersion = await oracle.flowVersion();
+
+    await expect(oracle.connect(registrar).invalidateFlowCache())
+      .to.emit(oracle, "QuexFlowCacheInvalidated")
+      .withArgs(previousVersion + 1n);
+    expect(await oracle.flowVersion()).to.equal(previousVersion + 1n);
+  });
+
   it("rejects base request query parameter with reserved key id in any case variant", async function () {
     const { oracle, registrar, requestPool, baseRequest } = await deployFixture();
     for (const key of ["id", "iD", "Id", "ID"]) {
@@ -241,6 +274,25 @@ describe("UFarmQuexOracle", function () {
     expect(await oracle.vaultByRequestId(requestId)).to.equal(ethers.ZeroAddress);
   });
 
+  it("rejects a Quex flow id that collides with a pending request id", async function () {
+    const { oracle, quexCore, vault, configure, startVaultRequest } = await deployFixture();
+    await configure();
+    const requestId = await startVaultRequest();
+    const response = {
+      timestamp: await nextBlockTimestamp(),
+      errorCode: 0n,
+      value: ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1_000_000n]),
+    };
+
+    expect(requestId).to.equal(1n);
+    await expect(quexCore.submitResponseWithIdType(await oracle.getAddress(), 1n, requestId, response, 1n))
+      .to.be.revertedWithCustomError(oracle, "OracleFlowError")
+      .withArgs(OracleFlow.InvalidRequest);
+
+    expect(await oracle.vaultByRequestId(requestId)).to.equal(await vault.getAddress());
+    expect(await vault.activeOracleRequestId()).to.equal(requestId);
+  });
+
   it("rejects replayed Quex callbacks for the same request id after successful delivery", async function () {
     const { oracle, quexCore, configure, startVaultRequest } = await deployFixture();
     await configure();
@@ -282,7 +334,7 @@ describe("UFarmQuexOracle", function () {
     const requestId = await startVaultRequest();
 
     const goodValue = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1_000_000n]);
-    await expect(oracle.connect(outsider).quexCallback(1n, { timestamp: 1234n, errorCode: 0n, value: goodValue }))
+    await expect(oracle.connect(outsider).quexCallback(1n, { timestamp: 1234n, errorCode: 0n, value: goodValue }, 0n))
       .to.be.revertedWithCustomError(oracle, "Unauthorized")
       .withArgs(outsider.address);
 
