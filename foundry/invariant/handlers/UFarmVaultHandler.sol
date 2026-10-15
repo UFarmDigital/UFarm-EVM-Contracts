@@ -113,6 +113,7 @@ contract UFarmVaultHandler is InvariantVm {
         }
 
         totalShares += vault.balanceOf(address(vault));
+        totalShares += vault.balanceOf(address(escrow));
     }
 
     function modeledEscrowDepositLiability() external view returns (uint256 totalPendingDepositAssets) {

@@ -123,6 +123,8 @@ Escrow is intentionally passive. It does not know NAV, share price, fees, adapte
 - release assets back to the vault;
 - unlock a beneficiary balance for withdrawal.
 
+Vault shares awaiting deposit claim or redeem settlement are also held at the escrow address. They are accounted for in each vault's ERC-20 balances and owner request buckets, not in the escrow beneficiary ledger. The lifecycle module moves, mints, and burns those shares internally; beneficiaries cannot withdraw them through `UFarmEscrow.withdraw`.
+
 This keeps custody isolated from pricing and business logic.
 
 ### Value Tokens
@@ -305,7 +307,7 @@ Important properties:
 
 ### Redeem Request
 
-A redeem request moves vault shares into the vault and records a pending redeem.
+A redeem request moves vault shares from the owner to the escrow address and records a pending redeem.
 
 ```mermaid
 sequenceDiagram
@@ -320,11 +322,11 @@ sequenceDiagram
     Vault->>Core: usdToValueToken(payoutAsset, 1 USD WAD)
     Core-->>Vault: validated payout-token amount or zero
     Vault->>Vault: validate share balance and queue capacity
-    Vault->>Vault: move shares from owner to vault
+    Vault->>Vault: move shares from owner to escrow address
     Vault->>Vault: record pending redeem and queue owner
 ```
 
-The shares are locked inside the vault until the request is cancelled, reset, failed during settlement, or settled successfully.
+The shares remain at the escrow address while pending. Cancellation, timeout reset, and request failure return them from escrow to the owner; successful settlement burns them from escrow.
 
 ### Signed Request Batches
 
@@ -381,7 +383,7 @@ During settlement, each pending deposit is converted from token amount to valida
 Successful deposit settlement:
 
 - releases escrowed deposit assets from escrow to the vault;
-- mints shares to a claimable deposit bucket;
+- mints shares to the escrow address and records the owner's claimable deposit assets and shares;
 - lets the owner claim shares through the deposit entrypoint.
 
 Failed deposit settlement:
@@ -400,14 +402,14 @@ During settlement, each pending redeem is converted from shares into USD WAD thr
 
 Successful redeem settlement:
 
-- burns or consumes locked shares;
+- burns the pending shares held at the escrow address;
 - credits payout assets to escrow for the owner;
 - lets the owner claim or withdraw assets according to the claim path.
 
 Failed redeem settlement:
 
 - removes the owner from the pending queue;
-- returns locked shares to the owner;
+- returns locked shares from the escrow address to the owner;
 - emits a request failure event.
 
 An invalid price affects only requests that use that payout asset. Other requests in the bounded settlement queue continue normally.
@@ -418,13 +420,16 @@ Claims are separate from settlement.
 
 Deposit claim:
 
-- mints or delivers the settled vault shares to the claim owner.
+- clears the owner's claimable deposit bucket and moves the already minted shares from the escrow address to the owner;
+- does not mint additional shares or use the escrow beneficiary ledger.
 
 Redeem claim:
 
 - releases settled assets from escrow to the receiver, or leaves them withdrawable depending on the claim path.
 
-Escrow also supports direct beneficiary withdrawal for unlocked balances. Locked balances cannot be withdrawn until the lock expires or the vault unlocks them.
+Protocol deposit and redeem flows do not hold the vault's own shares at the vault address. This avoids including reserved user shares in a balance-based NAV valuation of the vault. Ordinary ERC-20 transfers to the vault remain possible when share transfers are unrestricted.
+
+Escrow also supports direct beneficiary withdrawal for unlocked asset balances. Locked balances cannot be withdrawn until the lock expires or the vault unlocks them.
 
 ### Fees
 

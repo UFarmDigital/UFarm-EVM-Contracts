@@ -106,7 +106,7 @@ async function deployFixture() {
   await asset.mint(owner.address, 1_000n);
   await asset.connect(owner).approve(await escrow.getAddress(), 1_000n);
 
-  return { core, escrow, vault, oracle, asset, lifecycleModule, owner, settleManager };
+  return { core, escrow, vault, oracle, asset, lifecycleModule, vaultOwner, owner, settleManager };
 }
 
 async function nextBlockTimestamp() {
@@ -136,15 +136,47 @@ describe("VaultLifecycleModule", function () {
       .to.emit(vault, "DepositSettled")
       .withArgs(owner.address, await asset.getAddress(), 100n, 100n);
     expect(await vault.claimableDepositRequest(0n, owner.address)).to.equal(100n);
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(100n);
+    expect(await vault.balanceOf(owner.address)).to.equal(0n);
+    expect(await vault.totalSupply()).to.equal(100n);
 
     await expect(vault.connect(owner).deposit(0n, owner.address, owner.address))
       .to.emit(vault, "DepositClaimed")
       .withArgs(owner.address, 100n);
     expect(await vault.balanceOf(owner.address)).to.equal(100n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(0n);
+    expect(await vault.totalSupply()).to.equal(100n);
     expect(await escrow.balanceOf(await vault.getAddress(), await asset.getAddress(), owner.address)).to.deep.equal([
       0n,
       0n,
     ]);
+  });
+
+  it("keeps unclaimed deposit shares outside vault NAV through another settlement and restricted claim", async function () {
+    const { core, escrow, vault, oracle, owner, settleManager, vaultOwner } = await deployFixture();
+    await core.setNavRequestCooldown(1n);
+    await vault.connect(vaultOwner).setTransferRestricted(true);
+    await core.setGlobalPauseMask(1n << 9n); // Ordinary share transfers are paused.
+    await vault.connect(owner).requestDeposit(100n, owner.address, owner.address);
+    await vault.connect(settleManager).getFunction("settleRequests()")();
+    await oracle.submitNav(await vault.activeOracleRequestId(), 0n, await nextBlockTimestamp());
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(100n);
+
+    await vault.connect(settleManager).getFunction("settleRequests()")();
+    await oracle.submitNav(await vault.activeOracleRequestId(), 100n, await nextBlockTimestamp());
+    expect(await vault.isInvalidPrice()).to.equal(false);
+    expect(await vault.totalSupply()).to.equal(100n);
+    await expect(escrow.connect(owner).withdraw(await vault.getAddress(), await vault.getAddress(), 100n, owner.address))
+      .to.be.revertedWithCustomError(escrow, "InsufficientLiquidity");
+    await core.setGlobalPauseMask(1n << 3n); // Claim permissions still apply to escrow-held shares.
+    await expect(vault.connect(owner).deposit(0n, owner.address, owner.address)).to.be.revertedWithCustomError(vault, "FlowPaused");
+    await core.setGlobalPauseMask(1n << 9n);
+    await vault.connect(owner).deposit(0n, owner.address, owner.address);
+    expect(await vault.balanceOf(owner.address)).to.equal(100n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(0n);
+    await expect(vault.connect(owner).deposit(0n, owner.address, owner.address)).to.be.revertedWithCustomError(vault, "RequestStateError");
   });
 
   it("routes lifecycle validation failures through the registered module", async function () {
@@ -160,6 +192,33 @@ describe("VaultLifecycleModule", function () {
     await expect(vault.connect(owner).requestDeposit(1n, ethers.ZeroAddress, owner.address))
       .to.be.revertedWithCustomError(vault, "RequestStateError")
       .withArgs(RequestState.NoBatch);
+  });
+
+  it("isolates share reserves of two vaults using the same escrow", async function () {
+    const { core, escrow, vault, oracle, asset, owner, settleManager } = await deployFixture();
+    const [, registrar, curatorOwner, vaultOwner] = await ethers.getSigners();
+    const secondVault = await createVault(core, asset, registrar, curatorOwner, vaultOwner, "second-lifecycle-vault");
+    await secondVault.connect(vaultOwner).setPermissionMask(settleManager.address, VAULT_SETTLE_MANAGER);
+    await core.setVaultOracle(await secondVault.getAddress(), await oracle.getAddress());
+    await vault.connect(owner).requestDeposit(100n, owner.address, owner.address);
+    await secondVault.connect(owner).requestDeposit(70n, owner.address, owner.address);
+    await vault.connect(settleManager).getFunction("settleRequests()")();
+    await oracle.submitNav(await vault.activeOracleRequestId(), 0n, await nextBlockTimestamp());
+    await secondVault.connect(settleManager).getFunction("settleRequests()")();
+    await oracle.submitNav(await secondVault.activeOracleRequestId(), 0n, await nextBlockTimestamp());
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(100n);
+    expect(await secondVault.balanceOf(await escrow.getAddress())).to.equal(70n);
+
+    await secondVault.connect(owner).deposit(0n, owner.address, owner.address);
+    await secondVault.connect(owner).requestRedeem(30n, owner.address, owner.address);
+    expect(await secondVault.balanceOf(await escrow.getAddress())).to.equal(30n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(100n);
+    await vault.connect(owner).deposit(0n, owner.address, owner.address);
+    await secondVault.connect(owner).cancelRedeem(owner.address);
+    expect(await vault.balanceOf(owner.address)).to.equal(100n);
+    expect(await secondVault.balanceOf(owner.address)).to.equal(70n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(0n);
+    expect(await secondVault.balanceOf(await escrow.getAddress())).to.equal(0n);
   });
 
   it("reverts direct external module calls with ModuleDelegateCallOnly", async function () {

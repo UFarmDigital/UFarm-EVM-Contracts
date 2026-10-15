@@ -841,7 +841,8 @@ describe("UFarmVault request lifecycle", function () {
       .to.emit(vault, "DepositSettled")
       .withArgs(owner.address, pricedAssetAddress, depositAssets, 99n * WAD);
     expect(await vault.totalSupply()).to.equal(99n * WAD);
-    expect(await vault.balanceOf(await vault.getAddress())).to.equal(99n * WAD);
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(99n * WAD);
   });
 
   it("converts redeem USD entitlement into payout token units", async function () {
@@ -1521,7 +1522,8 @@ describe("UFarmVault request lifecycle", function () {
     expect(await asset.balanceOf(await vault.getAddress())).to.equal(100n);
     expect(await vault.pendingDepositRequest(0n, owner.address)).to.equal(0n);
     expect(await vault.claimableDepositRequest(0n, owner.address)).to.equal(100n);
-    expect(await vault.balanceOf(await vault.getAddress())).to.equal(100n);
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(100n);
 
     await expect(vault.connect(owner).deposit(0n, owner.address, owner.address))
       .to.emit(vault, "DepositClaimed")
@@ -2145,7 +2147,7 @@ describe("UFarmVault request lifecycle", function () {
 
   it("requests redeem and locks shares without changing total supply", async function () {
     const fixture = await deployFixture();
-    const { vault, owner } = fixture;
+    const { vault, escrow, owner } = fixture;
     await seedShares(fixture, owner, 100n);
 
     await expect(vault.connect(owner).requestRedeem(40n, owner.address, owner.address))
@@ -2153,9 +2155,106 @@ describe("UFarmVault request lifecycle", function () {
       .withArgs(owner.address, owner.address, 0n, owner.address, 40n);
 
     expect(await vault.balanceOf(owner.address)).to.equal(60n);
-    expect(await vault.balanceOf(await vault.getAddress())).to.equal(40n);
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(40n);
     expect(await vault.totalSupply()).to.equal(100n);
     expect(await vault.pendingRedeemRequest(0n, owner.address)).to.equal(40n);
+  });
+
+  it("keeps pending redeems and unclaimed deposits in escrow through cancellation, settlement, and claims", async function () {
+    const fixture = await deployFixture();
+    const { core, vault, escrow, asset, owner, receiver, vaultOwner, assetManager } = fixture;
+    const vaultAddress = await vault.getAddress();
+    const escrowAddress = await escrow.getAddress();
+    await core.setNavRequestCooldown(1n);
+    await seedShares(fixture, owner, 100n);
+    await asset.mint(receiver.address, 50n);
+    await asset.connect(receiver).approve(escrowAddress, 50n);
+    await vault.connect(receiver).requestDeposit(50n, receiver.address, receiver.address);
+    await settleWithOracle(vault, assetManager, 100n);
+    await vault.connect(vaultOwner).setTransferRestricted(true);
+    await core.setGlobalPauseMask(1n << 9n);
+
+    await vault.connect(owner).requestRedeem(40n, owner.address, owner.address);
+    expect(await vault.balanceOf(vaultAddress)).to.equal(0n);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(90n);
+    await expect(escrow.connect(owner).withdraw(vaultAddress, vaultAddress, 40n, owner.address))
+      .to.be.revertedWithCustomError(escrow, "InsufficientLiquidity");
+    await vault.connect(owner).cancelRedeem(owner.address);
+    expect(await vault.balanceOf(owner.address)).to.equal(100n);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(50n);
+
+    await vault.connect(owner).requestRedeem(40n, owner.address, owner.address);
+    await settleWithOracle(vault, assetManager, 150n);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(50n);
+    expect(await vault.totalSupply()).to.equal(110n);
+    expect(await vault.claimableDepositRequest(0n, receiver.address)).to.equal(50n);
+    expect(await escrow.balanceOf(vaultAddress, await asset.getAddress(), owner.address)).to.deep.equal([40n, 0n]);
+    await vault.connect(receiver).deposit(0n, receiver.address, receiver.address);
+    expect(await vault.balanceOf(receiver.address)).to.equal(50n);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(0n);
+    await vault.connect(owner).redeem(0n, owner.address, owner.address);
+    expect(await escrow.balanceOf(vaultAddress, await asset.getAddress(), owner.address)).to.deep.equal([0n, 0n]);
+    expect(await vault.balanceOf(vaultAddress)).to.equal(0n);
+  });
+
+  it("returns escrow-held pending redeem shares when a timed-out oracle request is reset", async function () {
+    const fixture = await deployFixture();
+    const { core, vault, escrow, owner, assetManager } = fixture;
+    await core.setNavRequestCooldown(1n);
+    await core.setOracleRequestTimeout(1n);
+    await seedShares(fixture, owner, 100n);
+    await vault.connect(owner).requestRedeem(40n, owner.address, owner.address);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(40n);
+    await vault.connect(assetManager).getFunction("settleRequests()")();
+    await increaseTime(2);
+    await expect(vault.connect(assetManager).resetRequests())
+      .to.emit(vault, "RedeemCancelled").withArgs(owner.address, 40n);
+    expect(await vault.balanceOf(owner.address)).to.equal(100n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(0n);
+    expect(await vault.pendingRedeemRequest(0n, owner.address)).to.equal(0n);
+    expect(await vault.totalSupply()).to.equal(100n);
+  });
+
+  it("preserves both escrow share reserves through rejected NAV and an oracle resend", async function () {
+    const fixture = await deployFixture();
+    const { core, vault, escrow, asset, authority, owner, receiver, assetManager } = fixture;
+    const escrowAddress = await escrow.getAddress();
+    await core.setNavRequestCooldown(1n);
+    await core.setOracleRequestTimeout(1n);
+    await seedShares(fixture, owner, 100n);
+    await asset.mint(receiver.address, 50n);
+    await asset.connect(receiver).approve(escrowAddress, 50n);
+    await vault.connect(receiver).requestDeposit(50n, receiver.address, receiver.address);
+    await settleWithOracle(vault, assetManager, 100n);
+    await vault.connect(owner).requestRedeem(40n, owner.address, owner.address);
+    await core.setAllowedPriceFluctuation(10n ** 16n);
+    await settleWithOracle(vault, assetManager, 1n);
+    expect(await vault.isInvalidPrice()).to.equal(true);
+    expect(await vault.activeOracleRequestId()).to.equal(0n);
+    expect(await vault.pendingRedeemRequest(0n, owner.address)).to.equal(40n);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(90n);
+    expect(await vault.totalSupply()).to.equal(150n);
+
+    await vault.connect(authority).resetInvalidPrice(150n);
+    await advancePastSettlementCooldown(vault);
+    await vault.connect(assetManager).getFunction("settleRequests()")();
+    const oldRequestId = await vault.activeOracleRequestId();
+    await increaseTime(2);
+    await vault.connect(assetManager).manualResendOracleRequest();
+    const requestId = await vault.activeOracleRequestId();
+    expect(requestId).to.not.equal(oldRequestId);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(90n);
+    const oracle = await ethers.getContractAt("MockUFarmOracle", await core.oracleForVault(await vault.getAddress()));
+    await expect(oracle.submitNav(oldRequestId, 150n, await nextBlockTimestamp()))
+      .to.be.revertedWithCustomError(vault, "OracleFlowError").withArgs(OracleFlow.InvalidRequest);
+    await oracle.submitNav(requestId, 150n, await nextBlockTimestamp());
+    expect(await vault.balanceOf(escrowAddress)).to.equal(50n);
+    expect(await vault.totalSupply()).to.equal(110n);
+    expect(await vault.pendingRedeemRequest(0n, owner.address)).to.equal(0n);
+    expect(await vault.claimableDepositRequest(0n, receiver.address)).to.equal(50n);
+    await vault.connect(receiver).deposit(0n, receiver.address, receiver.address);
+    expect(await vault.balanceOf(escrowAddress)).to.equal(0n);
   });
 
   it("allows approved operator to request redeem for owner", async function () {
@@ -2525,7 +2624,8 @@ describe("UFarmVault request lifecycle", function () {
     expect(await vault.claimableRedeemRequest(0n, owner.address)).to.equal(40n);
     expect(await vault.pendingDepositRequest(0n, receiver.address)).to.equal(0n);
     expect(await vault.pendingRedeemRequest(0n, owner.address)).to.equal(0n);
-    expect(await vault.balanceOf(await vault.getAddress())).to.equal(25n);
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(25n);
     expect(await escrow.balanceOf(await vault.getAddress(), await asset.getAddress(), owner.address)).to.deep.equal([
       80n,
       0n,

@@ -225,7 +225,7 @@ describe("UFarmVault adapter reentrancy security", function () {
 
   it("blocks reentrant redeem cancellation from approved operator during adapter execution", async function () {
     const fixture = await deployFixture();
-    const { reentrantTarget, vault, owner } = fixture;
+    const { reentrantTarget, vault, escrow, owner } = fixture;
     await seedClaimedShares(fixture, owner, 100n);
     await vault.connect(owner).setOperator(await reentrantTarget.getAddress(), true);
     await vault.connect(owner).requestRedeem(40n, owner.address, owner.address);
@@ -234,7 +234,9 @@ describe("UFarmVault adapter reentrancy security", function () {
 
     expect(await reentrantTarget.lastSuccess()).to.equal(false);
     expect(await vault.pendingRedeemRequest(0n, owner.address)).to.equal(40n);
-    expect(await vault.balanceOf(await vault.getAddress())).to.equal(40n);
+    expect(await vault.balanceOf(await vault.getAddress())).to.equal(0n);
+    expect(await vault.balanceOf(await escrow.getAddress())).to.equal(40n);
+    expect(await vault.balanceOf(owner.address)).to.equal(60n);
   });
 
   it("keeps claim paths callable during adapter callback because settled claims do not change NAV custody", async function () {

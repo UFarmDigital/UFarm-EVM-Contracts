@@ -126,17 +126,18 @@ contract VaultLifecycleModule is
     }
 
     /// @notice Claims a settled deposit as vault shares.
+    /// @dev Share custody is tracked by the vault; no withdrawal balance is credited in the escrow ledger.
     /// @param assets Unused ERC-7540 compatibility argument.
-    /// @param receiver Address that receives minted shares. Must equal controller.
+    /// @param receiver Address that receives the shares. Must equal controller.
     /// @param controller Address whose claimable deposit is claimed.
-    /// @return Number of shares minted.
+    /// @return Number of shares released.
     function deposit(uint256 assets, address receiver, address controller) external onlyDelegateCall returns (uint256) {
         if (receiver != controller) revert IUFarmVaultErrors.InvalidAddress();
         return _claimDeposit(controller);
     }
 
     /// @notice Opens a pending redeem request.
-    /// @dev Moves shares from the owner into the vault until settlement or cancellation.
+    /// @dev Moves shares from the owner into escrow until settlement or cancellation.
     /// @param shares Number of shares to redeem.
     /// @param controller Address that controls the request. Must be the owner.
     /// @param owner_ Address that owns the shares.
@@ -201,7 +202,7 @@ contract VaultLifecycleModule is
 
         delete state.pendingRedeem;
         _removePendingRedeemOwner(owner_);
-        VaultShareAccounting.moveShares(address(this), owner_, request.amount);
+        VaultShareAccounting.moveShares(_escrow(), owner_, request.amount);
 
         emit RedeemCancelled(owner_, request.amount);
         return request.amount;
@@ -487,7 +488,7 @@ contract VaultLifecycleModule is
         IUFarmVaultRequests.RequestParams memory request = signedRequest.request;
         if (!_validateRequest(signedRequest, requireSignature, true)) return false;
 
-        VaultShareAccounting.moveShares(request.owner, address(this), request.amount);
+        VaultShareAccounting.moveShares(request.owner, _escrow(), request.amount);
         VaultTypes.OwnerRequestState storage state = VaultLifecycleStorage.data().requestStates[request.owner];
         state.pendingRedeem = VaultTypes.PendingRequest({
             asset: request.asset, amount: request.amount, minOutputAmount: request.minOutputAmount
@@ -725,6 +726,7 @@ contract VaultLifecycleModule is
     function _cancelPendingRedeems() internal {
         VaultLifecycleStorage.Layout storage lifecycle = VaultLifecycleStorage.data();
         uint256 ownersLength = lifecycle.pendingRedeemOwners.length;
+        address escrow_ = _escrow();
         for (uint256 i = 0; i < ownersLength; ++i) {
             address owner_ = lifecycle.pendingRedeemOwners[i];
             VaultTypes.OwnerRequestState storage state = lifecycle.requestStates[owner_];
@@ -732,7 +734,7 @@ contract VaultLifecycleModule is
             if (request.amount == 0) continue;
 
             delete state.pendingRedeem;
-            VaultShareAccounting.moveShares(address(this), owner_, request.amount);
+            VaultShareAccounting.moveShares(escrow_, owner_, request.amount);
             emit RedeemCancelled(owner_, request.amount);
         }
 
@@ -749,7 +751,7 @@ contract VaultLifecycleModule is
         if (shares == 0) revert IUFarmVaultErrors.RequestStateError(ErrorCodes.REQUEST_NO_CLAIMABLE);
 
         delete state.claimableDeposit;
-        VaultShareAccounting.moveShares(address(this), owner_, shares);
+        VaultShareAccounting.moveShares(_escrow(), owner_, shares);
         emit DepositClaimed(owner_, shares);
         return shares;
     }
@@ -868,7 +870,8 @@ contract VaultLifecycleModule is
                 continue;
             }
 
-            VaultShareAccounting.mintShares(address(this), shares);
+            // The vault's own shares must stay outside its NAV-visible asset balance until claim.
+            VaultShareAccounting.mintShares(escrow_, shares);
             state.claimableDeposit.asset = request.asset;
             state.claimableDeposit.assets += request.amount;
             state.claimableDeposit.shares += shares;
@@ -909,10 +912,10 @@ contract VaultLifecycleModule is
 
             delete state.pendingRedeem;
             if (errorCode != 0) {
-                VaultShareAccounting.moveShares(address(this), owner_, request.amount);
+                VaultShareAccounting.moveShares(escrow_, owner_, request.amount);
                 emit RequestFailed(owner_, REQUEST_KIND_REDEEM, errorCode);
             } else {
-                VaultShareAccounting.burnShares(address(this), request.amount);
+                VaultShareAccounting.burnShares(escrow_, request.amount);
                 state.claimableRedeem =
                     VaultTypes.ClaimableRequest({asset: request.asset, assets: assets, shares: request.amount});
                 emit RedeemSettled(owner_, request.asset, request.amount, assets);

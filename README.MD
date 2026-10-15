@@ -8,7 +8,7 @@ This repository contains the smart contracts, deployment modules, execution scri
 
 Pinned Foundation toolchain:
 
-- Hardhat: 3.8.0
+- Hardhat: 3.15.0
 - Solidity compiler: 0.8.35
 - OpenZeppelin Contracts: 5.6.1
 - OpenZeppelin Contracts Upgradeable: 5.6.1

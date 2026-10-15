@@ -136,8 +136,8 @@ contract UFarmVaultInvariantTest is InvariantFixture {
     }
 
     function invariant_knownShareSupplyIsConserved() external view {
-        uint256 knownShares =
-            vault.balanceOf(address(vault)) + vault.balanceOf(address(core)) + vault.balanceOf(address(curator));
+        uint256 knownShares = vault.balanceOf(address(vault)) + vault.balanceOf(address(escrow))
+            + vault.balanceOf(address(core)) + vault.balanceOf(address(curator));
         uint256 actorCount = handler.actorCount();
         for (uint256 i = 0; i < actorCount; i += 1) {
             knownShares += vault.balanceOf(handler.actorAt(i));
@@ -146,15 +146,22 @@ contract UFarmVaultInvariantTest is InvariantFixture {
         _assertEq(knownShares, vault.totalSupply(), "known share balances do not equal total supply");
     }
 
-    function invariant_vaultHeldSharesCoverRequestLiabilities() external view {
-        uint256 pendingRedeemShares = 0;
+    function invariant_escrowHeldSharesMatchRequestLiabilities() external view {
+        uint256 reservedShares = 0;
         uint256 actorCount = handler.actorCount();
         for (uint256 i = 0; i < actorCount; i += 1) {
             address actor = handler.actorAt(i);
-            pendingRedeemShares += handler.modeledPendingRedeem(actor);
+            // requestStates[actor] starts at this mapping slot. Slot + 5 is claimableDeposit.shares
+            // in VaultTypes.OwnerRequestState; read the shares directly rather than inferring them from NAV.
+            bytes32 ownerSlot = keccak256(abi.encode(actor, keccak256("ufarm.vault.lifecycle.storage")));
+            uint256 depositShares = uint256(vm.load(address(vault), bytes32(uint256(ownerSlot) + 5)));
+            reservedShares += depositShares + vault.pendingRedeemRequest(0, actor);
         }
 
-        _assertTrue(vault.balanceOf(address(vault)) >= pendingRedeemShares, "vault-held shares do not cover redeems");
+        _assertEq(vault.balanceOf(address(vault)), 0, "vault holds its own request shares");
+        _assertEq(
+            vault.balanceOf(address(escrow)), reservedShares, "escrow share custody differs from request liabilities"
+        );
     }
 
     function invariant_valueTokenSupplyIsConserved() external view {
@@ -172,7 +179,7 @@ contract UFarmVaultInvariantTest is InvariantFixture {
         uint256 actorCount = handler.actorCount();
         uint256 supply = vault.totalSupply();
         uint256 trackedVisibleShares = 0;
-        uint256 trackedVaultHeldClaims = 0;
+        uint256 trackedEscrowHeldClaims = 0;
 
         for (uint256 i = 0; i < actorCount; i += 1) {
             address actor = handler.actorAt(i);
@@ -180,13 +187,13 @@ contract UFarmVaultInvariantTest is InvariantFixture {
             uint256 pendingRedeem = handler.modeledPendingRedeem(actor);
 
             trackedVisibleShares += visibleBalance;
-            trackedVaultHeldClaims += pendingRedeem;
+            trackedEscrowHeldClaims += pendingRedeem;
             _assertTrue(visibleBalance + pendingRedeem <= supply, "actor share ownership exceeds total supply");
         }
 
-        uint256 vaultHeldShares = vault.balanceOf(address(vault));
-        _assertTrue(trackedVaultHeldClaims <= vaultHeldShares, "vault-held request shares are under-collateralized");
-        _assertTrue(trackedVisibleShares + vaultHeldShares <= supply, "tracked share custody exceeds total supply");
+        uint256 escrowHeldShares = vault.balanceOf(address(escrow));
+        _assertTrue(trackedEscrowHeldClaims <= escrowHeldShares, "escrow-held request shares are under-collateralized");
+        _assertTrue(trackedVisibleShares + escrowHeldShares <= supply, "tracked share custody exceeds total supply");
     }
 
     function invariant_activeOracleStateIsConsistent() external view {
